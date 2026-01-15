@@ -23,11 +23,13 @@ cd ash-zig && bun run build:release && cd ..
 # Binary size
 ls -lh ash-go/bin/ash ash-zig/zig-out/bin/ash
 
-# Startup time
-hyperfine 'ash-go/bin/ash --help' 'ash-zig/zig-out/bin/ash --help'
+# Startup time (20 runs)
+hyperfine --runs 20 --warmup 3 \
+  'ash-go/bin/ash --help' \
+  'ash-zig/zig-out/bin/ash --help'
 
-# Full scan (dry run)
-hyperfine --warmup 1 \
+# Full scan dry run (20 runs)
+hyperfine --runs 20 --warmup 3 \
   'ash-go/bin/ash --dry-run' \
   'ash-zig/zig-out/bin/ash --dry-run'
 ```
