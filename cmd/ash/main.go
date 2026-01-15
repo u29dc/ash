@@ -173,23 +173,17 @@ func printCategoryReport(entries []scanner.Entry, cat scanner.Category, homeDir 
 	catName := formatCategoryName(cat)
 	fmt.Printf("%s (%d items, %s)\n", catName, len(entries), humanize.IBytes(uint64(catSize)))
 
-	// Print entries (limit to top 20 per category)
-	displayCount := len(entries)
-	if displayCount > 20 {
-		displayCount = 20
-	}
-
-	for i := 0; i < displayCount; i++ {
-		e := entries[i]
+	// Print all entries
+	for _, e := range entries {
 		path := e.Path
 		if homeDir != "" && strings.HasPrefix(path, homeDir) {
 			path = "~" + path[len(homeDir):]
 		}
-		fmt.Printf("  %-60s %10s\n", truncatePath(path, 60), humanize.IBytes(uint64(e.Size)))
-	}
-
-	if len(entries) > 20 {
-		fmt.Printf("  ... and %d more items\n", len(entries)-20)
+		if e.IsSymlink {
+			fmt.Printf("  %-45s -> %-10s %10s\n", truncatePath(path, 45), truncatePath(e.SymlinkTarget, 10), humanize.IBytes(uint64(e.Size)))
+		} else {
+			fmt.Printf("  %-60s %10s\n", truncatePath(path, 60), humanize.IBytes(uint64(e.Size)))
+		}
 	}
 	fmt.Println()
 
