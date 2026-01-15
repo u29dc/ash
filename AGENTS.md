@@ -1,87 +1,119 @@
-## 1. Documentation
+# ash - macOS Cleanup Utility
 
-- **Language**: Zig 0.13+ (latest stable)
-- **Reference**: https://ziglang.org/documentation/master/
+Two implementations for benchmarking comparison:
+- `ash-go/` - Go implementation with Bubble Tea TUI
+- `ash-zig/` - Zig implementation with custom ANSI TUI
 
-## 2. Repository Structure
+## Repository Structure
 
 ```
 .
-├── build.zig              # Zig build configuration
-├── build.zig.zon          # Package manifest
-├── src/
-│   ├── main.zig           # Entry point
-│   ├── app.zig            # Application state machine
-│   ├── config.zig         # Configuration
-│   ├── maintenance.zig    # System maintenance commands
-│   ├── utils.zig          # Utility functions
-│   ├── scanner/           # Directory scanning modules
-│   │   ├── scanner.zig    # Core types and interface
-│   │   ├── caches.zig     # Cache scanning
-│   │   ├── logs.zig       # Log scanning
-│   │   ├── xcode.zig      # Xcode data
-│   │   ├── homebrew.zig   # Homebrew cache
-│   │   ├── browsers.zig   # Browser caches
-│   │   └── apps.zig       # App leftovers
-│   ├── cleaner/           # Deletion orchestration
-│   │   ├── cleaner.zig    # Core cleaner
-│   │   └── trash.zig      # macOS Trash integration
-│   ├── safety/            # Protection and guards
-│   │   ├── guards.zig     # Never-delete patterns
-│   │   └── permissions.zig# TCC/FDA detection
-│   ├── tui/               # Terminal UI
-│   │   ├── ansi.zig       # ANSI escape codes
-│   │   ├── terminal.zig   # Raw mode handling
-│   │   ├── theme.zig      # Grayscale theme
-│   │   ├── render.zig     # Screen rendering
-│   │   └── components/    # UI components
-│   └── views/             # Screen views
-├── PLAN.zig.md            # Implementation plan
-└── .archive/              # Original Go implementation (reference)
+├── ash-go/                # Go implementation
+│   ├── cmd/ash/main.go
+│   ├── internal/
+│   ├── pkg/
+│   ├── tests/
+│   ├── go.mod
+│   └── Makefile
+├── ash-zig/               # Zig implementation
+│   ├── src/
+│   ├── build.zig
+│   └── build.zig.zon
+├── PLAN.md                # Original Go implementation plan
+└── AGENTS.md              # This file
 ```
 
-## 3. Stack
+---
 
-| Layer    | Choice | Notes                              |
-|----------|--------|------------------------------------|
-| Language | Zig 0.13+ | Zero dependencies, manual memory |
-| TUI      | Custom | Raw ANSI escape codes             |
-| Build    | build.zig | Standard Zig build system       |
+## ash-go (Go Implementation)
 
-## 4. Commands
+### Stack
+| Layer | Choice | Notes |
+|-------|--------|-------|
+| Language | Go 1.24+ | With race detector for tests |
+| TUI | Bubble Tea | Elm architecture, grayscale theme |
+| Scanner | fastwalk | 4-6x faster than stdlib |
 
-- `zig build` - Build binary to `zig-out/bin/ash`
-- `zig build run` - Build and run
-- `zig build test` - Run all tests
-- `zig build -Doptimize=ReleaseFast` - Release build
-- `zig fmt src/` - Format code
+### Commands
+```bash
+cd ash-go
+bun run dev           # Run development build
+bun run build         # Build binary
+bun run test          # Run tests
+bun run util:check    # Format, lint, test
+```
 
-## 5. Architecture
+---
 
-- **Scanner** (`src/scanner/`): Directory traversal with category-based modules (caches, logs, xcode, homebrew, browsers, apps)
-- **Cleaner** (`src/cleaner/`): Move files to Trash via osascript, safety validation
-- **Safety** (`src/safety/`): Protected paths, bundle ID allowlist, permission checks
-- **TUI** (`src/tui/`): Custom terminal rendering with ANSI codes, grayscale theme
-- **Views** (`src/views/`): Home, scanning, results, confirm, cleaning, maintenance
+## ash-zig (Zig Implementation)
 
-## 6. Cleanup Targets
+### Stack
+| Layer | Choice | Notes |
+|-------|--------|-------|
+| Language | Zig 0.13+ | Zero dependencies |
+| TUI | Custom | Raw ANSI escape codes |
+| Build | build.zig | Standard Zig build system |
 
+### Commands
+```bash
+cd ash-zig
+zig build                          # Build binary
+zig build run                      # Build and run
+zig build test                     # Run tests
+zig build -Doptimize=ReleaseFast   # Release build
+zig fmt src/                       # Format code
+```
+
+---
+
+## Feature Parity
+
+Both implementations provide identical functionality:
+
+### Cleanup Targets
 - **Caches**: `~/Library/Caches/*` (excludes Homebrew, browsers)
 - **Logs**: `~/Library/Logs/*`
 - **Xcode**: `DerivedData`, `Archives`, `iOS DeviceSupport`, `CoreSimulator`
 - **Homebrew**: `~/Library/Caches/Homebrew`
 - **Browsers**: Safari, Chrome, Firefox, Brave, Edge cache directories
 
-## 7. Safety Guards
-
+### Safety Guards
 - **Never delete**: `~/.ssh`, `~/Library/Keychains`, `.git` directories, `/System/*`
 - **Protected apps**: `com.apple.*`, `com.microsoft.*`
 - **Trash only**: All deletions move to Trash, never permanent
 - **Validation**: Every path checked against guards before clean
 
-## 8. Quality
+### TUI Views
+- Home menu
+- Scanning progress
+- Results with selection
+- Confirmation dialog
+- Cleaning progress
+- Maintenance commands
 
-- Quality gate: `zig build test`
-- Format: `zig fmt src/`
-- Build modes: Debug, ReleaseSafe, ReleaseFast, ReleaseSmall
-- Commits: Conventional Commits format `type(scope): description`
+---
+
+## Benchmarking
+
+Build both versions and compare:
+
+```bash
+# Build Go version
+cd ash-go && go build -o ../bin/ash-go ./cmd/ash && cd ..
+
+# Build Zig version
+cd ash-zig && zig build -Doptimize=ReleaseFast && cp zig-out/bin/ash ../bin/ash-zig && cd ..
+
+# Compare binary sizes
+ls -lh bin/
+
+# Benchmark startup time
+hyperfine './bin/ash-go --help' './bin/ash-zig --help'
+
+# Benchmark scan performance
+hyperfine './bin/ash-go scan' './bin/ash-zig scan'
+```
+
+## Commits
+
+Conventional Commits format: `type(scope): description`
