@@ -1,8 +1,8 @@
 const std = @import("std");
 const utils = @import("../utils.zig");
 
-/// Paths that must never be deleted
-const never_delete = [_][]const u8{
+/// Paths that must never be deleted (raw, unexpanded)
+const never_delete_raw = [_][]const u8{
     "~/Library/Keychains",
     "~/.ssh",
     "~/.gnupg",
@@ -46,23 +46,91 @@ const protected_bundle_ids = [_][]const u8{
 /// Size threshold (1 GB) that requires confirmation
 pub const size_confirmation_threshold: u64 = 1024 * 1024 * 1024;
 
+/// Cached expanded blocked paths (initialized once per process)
+var cached_blocked_paths: ?[]const []const u8 = null;
+var cache_allocator: ?std.mem.Allocator = null;
+
+/// Initialize the blocked paths cache
+pub fn initBlockedPathsCache(allocator: std.mem.Allocator) !void {
+    if (cached_blocked_paths != null) return; // Already initialized
+
+    var paths = std.ArrayList([]const u8).init(allocator);
+    errdefer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit();
+    }
+
+    for (never_delete_raw) |blocked| {
+        const expanded = utils.expandPath(allocator, blocked) catch continue;
+        try paths.append(expanded);
+    }
+
+    cached_blocked_paths = try paths.toOwnedSlice();
+    cache_allocator = allocator;
+}
+
+/// Deinitialize the blocked paths cache
+pub fn deinitBlockedPathsCache() void {
+    if (cached_blocked_paths) |paths| {
+        if (cache_allocator) |allocator| {
+            for (paths) |p| allocator.free(p);
+            allocator.free(paths);
+        }
+    }
+    cached_blocked_paths = null;
+    cache_allocator = null;
+}
+
+/// Resolve symlinks in a path to get the real path
+fn resolveSymlinks(allocator: std.mem.Allocator, path: []const u8) ?[]const u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const resolved = std.fs.cwd().realpath(path, &buf) catch return null;
+    return allocator.dupe(u8, resolved) catch null;
+}
+
 /// Check if a path is safe to delete
 pub fn isSafePath(allocator: std.mem.Allocator, path: []const u8) bool {
-    // Expand the path
+    // Expand the path (handle ~)
     const expanded = utils.expandPath(allocator, path) catch return false;
     defer allocator.free(expanded);
 
-    // Check never-delete directories
-    for (never_delete) |blocked| {
-        const blocked_expanded = utils.expandPath(allocator, blocked) catch continue;
-        defer allocator.free(blocked_expanded);
+    // Resolve symlinks to get the real path - prevents symlink attacks
+    // If resolution fails, continue with expanded path (file might not exist yet)
+    const resolved = resolveSymlinks(allocator, expanded) orelse expanded;
+    const should_free_resolved = (resolved.ptr != expanded.ptr);
+    defer if (should_free_resolved) allocator.free(resolved);
 
-        if (utils.pathStartsWith(expanded, blocked_expanded)) {
-            return false;
+    // Use cached blocked paths if available, otherwise expand on each call
+    const blocked_paths = cached_blocked_paths orelse blk: {
+        // Fallback: expand paths on each call (less efficient)
+        var temp_paths: [never_delete_raw.len][]const u8 = undefined;
+        var count: usize = 0;
+        for (never_delete_raw) |blocked| {
+            temp_paths[count] = utils.expandPath(allocator, blocked) catch continue;
+            count += 1;
+        }
+        // Check and clean up temp paths
+        for (temp_paths[0..count]) |blocked_expanded| {
+            if (utils.pathStartsWith(resolved, blocked_expanded)) {
+                // Clean up allocated paths before returning
+                for (temp_paths[0..count]) |p| allocator.free(p);
+                return false;
+            }
+        }
+        for (temp_paths[0..count]) |p| allocator.free(p);
+        break :blk null;
+    };
+
+    // Check against cached blocked paths
+    if (blocked_paths) |paths| {
+        for (paths) |blocked_expanded| {
+            if (utils.pathStartsWith(resolved, blocked_expanded)) {
+                return false;
+            }
         }
     }
 
-    // Check never-delete patterns
+    // Check never-delete patterns against basename
     const base = std.fs.path.basename(path);
     for (never_delete_patterns) |pattern| {
         if (utils.matchGlob(base, pattern)) {
@@ -70,9 +138,9 @@ pub fn isSafePath(allocator: std.mem.Allocator, path: []const u8) bool {
         }
     }
 
-    // Check for .git anywhere in path
-    if (std.mem.indexOf(u8, path, "/.git/") != null or
-        std.mem.indexOf(u8, path, "/.git") != null)
+    // Check for .git anywhere in path (use resolved path for symlink safety)
+    if (std.mem.indexOf(u8, resolved, "/.git/") != null or
+        std.mem.indexOf(u8, resolved, "/.git") != null)
     {
         return false;
     }

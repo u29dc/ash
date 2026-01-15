@@ -39,15 +39,11 @@ pub fn load(allocator: std.mem.Allocator) !Config {
     const path = try configPath(allocator);
     defer allocator.free(path);
 
-    const file = std.fs.openFileAbsolute(path, .{}) catch return default_config;
-    defer file.close();
+    // Check if config file exists, otherwise return defaults
+    std.fs.accessAbsolute(path, .{}) catch return default_config;
 
-    const content = file.readToEndAlloc(allocator, 1024 * 64) catch return default_config;
-    defer allocator.free(content);
-
-    // Simple JSON parsing - just return defaults for now
-    // Full JSON parsing would require more complex implementation
-    _ = content;
+    // TODO: Implement actual JSON parsing when needed
+    // For now, just return defaults
     return default_config;
 }
 

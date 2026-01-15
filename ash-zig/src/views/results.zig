@@ -17,10 +17,10 @@ pub const ResultsView = struct {
         };
     }
 
-    pub fn setEntries(self: *ResultsView, entries: []scanner.Entry) void {
-        self.file_list.setEntries(entries);
+    pub fn setEntries(self: *ResultsView, new_entries: []scanner.Entry) void {
+        self.file_list.setEntries(new_entries);
         self.total_size = 0;
-        for (entries) |entry| {
+        for (new_entries) |entry| {
             self.total_size += entry.size;
         }
     }

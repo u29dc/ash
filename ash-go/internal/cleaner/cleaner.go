@@ -116,6 +116,16 @@ func (c *Cleaner) Clean(ctx context.Context, entries []scanner.Entry) (*CleanSta
 
 			var err error
 			if !c.dryRun {
+				// Re-validate path safety immediately before deletion (TOCTOU protection)
+				if !safety.IsSafePath(e.Path) {
+					results <- CleanResult{
+						Path:    e.Path,
+						Success: false,
+						Error:   errors.New("path became unsafe: " + e.Path),
+						Size:    e.Size,
+					}
+					return
+				}
 				if c.useTrash {
 					err = MoveToTrash(e.Path)
 				} else {
@@ -171,6 +181,15 @@ func (c *Cleaner) CleanSingle(ctx context.Context, entry scanner.Entry) (*CleanR
 
 	var err error
 	if !c.dryRun {
+		// Re-validate path safety immediately before deletion (TOCTOU protection)
+		if !safety.IsSafePath(entry.Path) {
+			return &CleanResult{
+				Path:    entry.Path,
+				Success: false,
+				Error:   errors.New("path became unsafe: " + entry.Path),
+				Size:    entry.Size,
+			}, errors.New("path became unsafe: " + entry.Path)
+		}
 		if c.useTrash {
 			err = MoveToTrash(entry.Path)
 		} else {

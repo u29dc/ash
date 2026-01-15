@@ -40,8 +40,10 @@ func moveToTrashFallback(path string) error {
 	baseName := filepath.Base(path)
 	destPath := filepath.Join(trashDir, baseName)
 
+	// Cap iterations at 100 to prevent infinite loops
+	const maxTrashIterations = 100
 	counter := 1
-	for {
+	for counter <= maxTrashIterations {
 		if _, err := os.Stat(destPath); os.IsNotExist(err) {
 			break
 		}
@@ -49,6 +51,9 @@ func moveToTrashFallback(path string) error {
 		name := baseName[:len(baseName)-len(ext)]
 		destPath = filepath.Join(trashDir, fmt.Sprintf("%s %d%s", name, counter, ext))
 		counter++
+	}
+	if counter > maxTrashIterations {
+		return fmt.Errorf("too many files with name %q in trash", baseName)
 	}
 
 	return os.Rename(path, destPath)

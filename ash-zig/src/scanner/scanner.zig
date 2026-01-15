@@ -250,9 +250,9 @@ pub fn scanDirectory(
             .is_dir = item.kind == .directory,
         };
 
-        // Build full path
-        const full_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ expanded, item.name });
-        defer allocator.free(full_path);
+        // Build full path using fixed-size buffer to avoid hot path allocation
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const full_path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ expanded, item.name }) catch continue;
 
         entry.setPath(full_path);
         entry.setName(item.name);

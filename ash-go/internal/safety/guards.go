@@ -45,10 +45,19 @@ var protectedBundleIDs = []string{
 func IsSafePath(path string) bool {
 	expanded := expandPath(path)
 
-	// Check never-delete directories
+	// Resolve symlinks to prevent bypass attacks (e.g., symlink pointing to ~/.ssh)
+	resolved, err := filepath.EvalSymlinks(expanded)
+	if err == nil {
+		expanded = resolved
+	}
+	// If symlink resolution fails (e.g., broken symlink), continue with original path
+
+	// Check never-delete directories against both original and resolved paths
+	originalExpanded := expandPath(path)
 	for _, blocked := range neverDelete {
 		blockedExpanded := expandPath(blocked)
-		if strings.HasPrefix(expanded, blockedExpanded) {
+		// Check both the resolved path and original path against blocked directories
+		if strings.HasPrefix(expanded, blockedExpanded) || strings.HasPrefix(originalExpanded, blockedExpanded) {
 			return false
 		}
 	}

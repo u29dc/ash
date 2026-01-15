@@ -13,7 +13,7 @@ pub fn moveToTrash(allocator: std.mem.Allocator, path: []const u8) !void {
     // First, verify the path exists
     std.fs.accessAbsolute(path, .{}) catch |err| switch (err) {
         error.FileNotFound => return TrashError.PathNotFound,
-        error.AccessDenied => return TrashError.AccessDenied,
+        error.PermissionDenied => return TrashError.AccessDenied,
         else => return err,
     };
 

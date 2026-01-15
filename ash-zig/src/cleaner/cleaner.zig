@@ -153,7 +153,8 @@ pub const Cleaner = struct {
         }
 
         const end = std.time.nanoTimestamp();
-        stats.duration_ns = @intCast(end - start);
+        // Use saturating subtraction to prevent integer overflow if clocks are skewed
+        stats.duration_ns = if (end >= start) @intCast(end - start) else 0;
 
         return stats;
     }

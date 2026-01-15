@@ -162,6 +162,18 @@ fn readBundleId(allocator: std.mem.Allocator, plist_path: []const u8) ![]const u
 
 /// Extract bundle ID from a directory/file name
 fn extractBundleId(name: []const u8) ?[]const u8 {
+    // Handle .savedState suffix first (before checking bundle ID format)
+    if (std.mem.endsWith(u8, name, ".savedState")) {
+        const base = name[0 .. name.len - 11];
+        return extractBundleId(base);
+    }
+
+    // Handle .plist suffix
+    if (std.mem.endsWith(u8, name, ".plist")) {
+        const base = name[0 .. name.len - 6];
+        return extractBundleId(base);
+    }
+
     // Bundle IDs have format: com.company.app or org.company.app
     if (std.mem.startsWith(u8, name, "com.") or
         std.mem.startsWith(u8, name, "org.") or
@@ -174,18 +186,6 @@ fn extractBundleId(name: []const u8) ?[]const u8 {
             if (c == '.') dot_count += 1;
         }
         if (dot_count >= 2) return name;
-    }
-
-    // Handle .savedState suffix
-    if (std.mem.endsWith(u8, name, ".savedState")) {
-        const base = name[0 .. name.len - 11];
-        return extractBundleId(base);
-    }
-
-    // Handle .plist suffix
-    if (std.mem.endsWith(u8, name, ".plist")) {
-        const base = name[0 .. name.len - 6];
-        return extractBundleId(base);
     }
 
     return null;
