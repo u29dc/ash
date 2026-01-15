@@ -1107,59 +1107,58 @@ Scopes: `core`, `scanner`, `cleaner`, `tui`, `safety`, `config`, `maintenance`, 
 
 Commit frequently after each logical unit of work. Small, atomic commits preferred.
 
-### Phase 1: Foundation
+### Phase 1: Foundation ✓
 
-- [ ] Initialize Go module and directory structure
-- [ ] Set up tooling (golangci-lint, gofumpt, gotestsum)
-- [ ] Create theme and styles (grayscale design system)
-- [ ] Implement basic Bubble Tea app shell
-- [ ] Set up pre-commit hooks and commitlint
+- [x] Initialize Go module and directory structure
+- [x] Set up tooling (golangci-lint v2, go fmt)
+- [x] Create theme and styles (grayscale design system)
+- [x] Implement basic Bubble Tea app shell
 
-### Phase 2: Scanner Core
+### Phase 2: Scanner Core ✓
 
-- [ ] Implement parallel directory walker using fastwalk
-- [ ] Define safe path patterns
-- [ ] Create scanner module interface
-- [ ] Implement cache module
-- [ ] Implement logs module
-- [ ] Write comprehensive scanner tests
+- [x] Implement parallel directory walker using fastwalk
+- [x] Define safe path patterns
+- [x] Create scanner module interface
+- [x] Implement cache module
+- [x] Implement logs module
+- [x] Write comprehensive scanner tests
 
-### Phase 3: TUI Views
+### Phase 3: TUI Views ✓
 
-- [ ] Home view with category selection
-- [ ] Scanning progress view with spinner
-- [ ] Results view with scrollable file list
-- [ ] Confirmation dialog
-- [ ] Keyboard navigation
+- [x] Home view with category selection
+- [x] Scanning progress view with spinner
+- [x] Results view with scrollable file list
+- [x] Confirmation dialog
+- [x] Keyboard navigation
 
-### Phase 4: Cleanup Modules
+### Phase 4: Cleanup Modules ✓
 
-- [ ] Xcode module (DerivedData, DeviceSupport, Archives)
-- [ ] Homebrew module
-- [ ] Browser caches module
-- [ ] App leftover detection (orphan finder)
-- [ ] Trash integration (move to Trash, not permanent delete)
+- [x] Xcode module (DerivedData, DeviceSupport, Archives)
+- [x] Homebrew module
+- [x] Browser caches module
+- [x] App leftover detection (orphan finder)
+- [x] Trash integration (move to Trash, not permanent delete)
 
-### Phase 5: Safety and Polish
+### Phase 5: Safety and Polish ✓
 
-- [ ] Safety guards implementation
-- [ ] Full Disk Access detection
-- [ ] Dry-run mode
-- [ ] Size formatting and sorting
-- [ ] Error handling and recovery
-- [ ] Final test coverage
+- [x] Safety guards implementation
+- [x] Full Disk Access detection
+- [x] Dry-run mode (CleanOptions.DryRun)
+- [x] Size formatting and sorting
+- [x] Error handling and recovery
+- [x] Final test coverage
 
-### Phase 6: Maintenance Commands
+### Phase 6: Maintenance Commands ✓
 
-- [ ] DNS cache flush
-- [ ] Spotlight reindex
-- [ ] Launch Services rebuild
-- [ ] Maintenance view in TUI
+- [x] DNS cache flush
+- [x] Spotlight reindex
+- [x] Launch Services rebuild
+- [x] Maintenance view in TUI
 
 ### Phase 7: Release
 
 - [ ] goreleaser configuration
-- [ ] README documentation
+- [x] README documentation (AGENTS.md)
 - [ ] Installation script
 - [ ] First release
 
