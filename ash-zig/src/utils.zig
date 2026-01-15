@@ -89,7 +89,7 @@ pub fn matchGlob(name: []const u8, pattern: []const u8) bool {
     return p_idx == pattern.len;
 }
 
-/// Get directory size recursively
+/// Get directory size recursively (sequential version)
 pub fn getDirSize(allocator: std.mem.Allocator, path: []const u8) !u64 {
     var total: u64 = 0;
 
@@ -110,6 +110,81 @@ pub fn getDirSize(allocator: std.mem.Allocator, path: []const u8) !u64 {
     }
 
     return total;
+}
+
+/// Get directory size recursively with parallel subdirectory processing
+pub fn getDirSizeParallel(allocator: std.mem.Allocator, path: []const u8, num_threads: usize) !u64 {
+    var dir = std.fs.openDirAbsolute(path, .{ .iterate = true }) catch |err| switch (err) {
+        error.AccessDenied, error.FileNotFound => return 0,
+        else => return err,
+    };
+    defer dir.close();
+
+    // Collect subdirectories and files
+    var subdirs = std.ArrayList([]const u8){};
+    defer {
+        for (subdirs.items) |subdir| {
+            allocator.free(subdir);
+        }
+        subdirs.deinit(allocator);
+    }
+
+    var file_total: u64 = 0;
+
+    var iter = dir.iterate();
+    while (iter.next() catch null) |entry| {
+        if (entry.kind == .directory) {
+            const subpath = std.fmt.allocPrint(allocator, "{s}/{s}", .{ path, entry.name }) catch continue;
+            subdirs.append(allocator, subpath) catch {
+                allocator.free(subpath);
+                continue;
+            };
+        } else if (entry.kind == .file) {
+            const stat = dir.statFile(entry.name) catch continue;
+            file_total += stat.size;
+        }
+    }
+
+    // If few subdirs, use sequential for less overhead
+    if (subdirs.items.len <= 2) {
+        var total = file_total;
+        for (subdirs.items) |subdir| {
+            total += getDirSize(allocator, subdir) catch 0;
+        }
+        return total;
+    }
+
+    // Use thread pool for parallel processing
+    var pool: std.Thread.Pool = undefined;
+    pool.init(.{ .allocator = allocator, .n_jobs = @min(num_threads, subdirs.items.len) }) catch {
+        // Fallback to sequential if pool init fails
+        var total = file_total;
+        for (subdirs.items) |subdir| {
+            total += getDirSize(allocator, subdir) catch 0;
+        }
+        return total;
+    };
+    defer pool.deinit();
+
+    var total = std.atomic.Value(u64).init(file_total);
+    var wg: std.Thread.WaitGroup = .{};
+
+    for (subdirs.items) |subdir| {
+        wg.start();
+        pool.spawn(struct {
+            fn work(t: *std.atomic.Value(u64), w: *std.Thread.WaitGroup, alloc: std.mem.Allocator, p: []const u8) void {
+                defer w.finish();
+                const size = getDirSize(alloc, p) catch 0;
+                _ = t.fetchAdd(size, .monotonic);
+            }
+        }.work, .{ &total, &wg, allocator, subdir }) catch {
+            wg.finish();
+            continue;
+        };
+    }
+
+    wg.wait();
+    return total.load(.acquire);
 }
 
 /// Get current timestamp in nanoseconds
@@ -142,6 +217,189 @@ pub fn basename(path: []const u8) []const u8 {
 /// Get dirname of a path
 pub fn dirname(path: []const u8) []const u8 {
     return std.fs.path.dirname(path) orelse "";
+}
+
+// =============================================================================
+// Global Thread Pool - eliminates per-call pool creation overhead
+// =============================================================================
+
+var global_pool: ?std.Thread.Pool = null;
+var global_pool_allocator: ?std.mem.Allocator = null;
+
+/// Initialize global thread pool (call once at startup)
+pub fn initGlobalPool(allocator: std.mem.Allocator) !void {
+    if (global_pool != null) return;
+
+    global_pool_allocator = allocator;
+    const cpu_count = std.Thread.getCpuCount() catch 4;
+
+    // Initialize pool in-place
+    var pool: std.Thread.Pool = undefined;
+    try pool.init(.{
+        .allocator = allocator,
+        .n_jobs = cpu_count,
+    });
+    global_pool = pool;
+}
+
+/// Deinitialize global thread pool (call at shutdown)
+pub fn deinitGlobalPool() void {
+    if (global_pool) |*pool| {
+        pool.deinit();
+        global_pool = null;
+        global_pool_allocator = null;
+    }
+}
+
+/// Get the global thread pool
+pub fn getGlobalPool() ?*std.Thread.Pool {
+    if (global_pool) |*pool| return pool;
+    return null;
+}
+
+// =============================================================================
+// Fast Directory Size - work-stealing queue with recursive parallelism
+// =============================================================================
+
+/// Thread-safe work queue for parallel directory traversal
+const WorkQueue = struct {
+    paths: std.ArrayList([]const u8),
+    total: std.atomic.Value(u64),
+    pending: std.atomic.Value(usize),
+    allocator: std.mem.Allocator,
+    mutex: std.Thread.Mutex,
+
+    fn init(alloc: std.mem.Allocator) WorkQueue {
+        return .{
+            .paths = .{},
+            .total = std.atomic.Value(u64).init(0),
+            .pending = std.atomic.Value(usize).init(0),
+            .allocator = alloc,
+            .mutex = .{},
+        };
+    }
+
+    fn deinit(self: *WorkQueue) void {
+        // Free any remaining paths
+        for (self.paths.items) |p| {
+            self.allocator.free(p);
+        }
+        self.paths.deinit(self.allocator);
+    }
+
+    fn push(self: *WorkQueue, path: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        _ = self.pending.fetchAdd(1, .release);
+        self.paths.append(self.allocator, path) catch {
+            self.allocator.free(path);
+            _ = self.pending.fetchSub(1, .release);
+        };
+    }
+
+    fn pop(self: *WorkQueue) ?[]const u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.paths.items.len == 0) return null;
+        return self.paths.pop();
+    }
+
+    fn markDone(self: *WorkQueue, path: []const u8) void {
+        self.allocator.free(path);
+        // Decrement pending counter - isDone() checks when this reaches 0
+        _ = self.pending.fetchSub(1, .release);
+    }
+
+    fn isDone(self: *WorkQueue) bool {
+        // Check pending directly - done when no work is pending
+        // Use acquire ordering to synchronize with release in markDone/push
+        return self.pending.load(.acquire) == 0;
+    }
+};
+
+/// Worker function for parallel directory traversal
+fn dirWorker(queue: *WorkQueue) void {
+    var spin_count: usize = 0;
+    const max_spins: usize = 1000;
+
+    while (true) {
+        const path = queue.pop() orelse {
+            // Check if all work is done
+            if (queue.isDone()) break;
+
+            // Spin a bit before yielding
+            spin_count += 1;
+            if (spin_count > max_spins) {
+                std.Thread.yield() catch {};
+                spin_count = 0;
+            }
+            continue;
+        };
+
+        spin_count = 0;
+
+        // Process this directory
+        var dir = std.fs.openDirAbsolute(path, .{ .iterate = true }) catch {
+            queue.markDone(path);
+            continue;
+        };
+        defer dir.close();
+
+        var iter = dir.iterate();
+        while (iter.next() catch null) |entry| {
+            if (entry.kind == .directory) {
+                // Push subdirectory for parallel processing
+                const subpath = std.fmt.allocPrint(queue.allocator, "{s}/{s}", .{ path, entry.name }) catch continue;
+                queue.push(subpath);
+            } else if (entry.kind == .file) {
+                const stat = dir.statFile(entry.name) catch continue;
+                _ = queue.total.fetchAdd(stat.size, .monotonic);
+            }
+        }
+
+        queue.markDone(path);
+    }
+}
+
+/// Fast parallel directory size calculation using work-stealing queue
+pub fn getDirSizeFast(allocator: std.mem.Allocator, path: []const u8) !u64 {
+    // Check if path exists
+    std.fs.accessAbsolute(path, .{}) catch return 0;
+
+    var queue = WorkQueue.init(allocator);
+    defer queue.deinit();
+
+    // Seed with initial path
+    const initial = try allocator.dupe(u8, path);
+    queue.push(initial);
+
+    // CRITICAL: Use LOCAL pool to avoid deadlock with global pool
+    // (category scanners run on global pool and call this function)
+    const cpu_count = std.Thread.getCpuCount() catch 4;
+    var pool: std.Thread.Pool = undefined;
+    pool.init(.{ .allocator = allocator, .n_jobs = @min(cpu_count, 8) }) catch {
+        // Fallback to sequential if pool init fails
+        return getDirSize(allocator, path);
+    };
+    defer pool.deinit();
+
+    // Spawn workers
+    var wg: std.Thread.WaitGroup = .{};
+
+    for (0..pool.threads.len) |_| {
+        wg.start();
+        pool.spawn(struct {
+            fn work(w: *std.Thread.WaitGroup, q: *WorkQueue) void {
+                defer w.finish();
+                dirWorker(q);
+            }
+        }.work, .{ &wg, &queue }) catch {
+            wg.finish();
+        };
+    }
+
+    wg.wait();
+    return queue.total.load(.acquire);
 }
 
 // Tests

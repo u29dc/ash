@@ -91,7 +91,7 @@ pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
             entry.setPath(expanded);
             entry.setName(browser.name);
             entry.setBundleId(browser.bundle_id);
-            entry.size = utils.getDirSize(allocator, expanded) catch 0;
+            entry.size = utils.getDirSizeFast(allocator, expanded) catch 0;
 
             // Skip empty caches
             if (entry.size == 0) continue;
@@ -106,19 +106,22 @@ pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
 
 /// Check if a browser is installed
 pub fn isBrowserInstalled(bundle_id: []const u8) bool {
-    // Common browser locations
-    const app_dirs = [_][]const u8{
-        "/Applications",
-        "~/Applications",
-    };
-
     // Bundle ID to app name mapping
     const app_names = getAppNameForBundle(bundle_id);
 
-    for (app_dirs) |app_dir| {
+    // Check /Applications first
+    for (app_names) |app_name| {
+        var buf: [512]u8 = undefined;
+        const path = std.fmt.bufPrint(&buf, "/Applications/{s}.app", .{app_name}) catch continue;
+        std.fs.accessAbsolute(path, .{}) catch continue;
+        return true;
+    }
+
+    // Check ~/Applications (expand ~ to HOME)
+    if (std.posix.getenv("HOME")) |home| {
         for (app_names) |app_name| {
             var buf: [512]u8 = undefined;
-            const path = std.fmt.bufPrint(&buf, "{s}/{s}.app", .{ app_dir, app_name }) catch continue;
+            const path = std.fmt.bufPrint(&buf, "{s}/Applications/{s}.app", .{ home, app_name }) catch continue;
             std.fs.accessAbsolute(path, .{}) catch continue;
             return true;
         }

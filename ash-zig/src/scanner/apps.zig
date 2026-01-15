@@ -88,7 +88,7 @@ pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
             }
 
             if (item.kind == .directory) {
-                entry.size = utils.getDirSize(allocator, full_path) catch 0;
+                entry.size = utils.getDirSizeFast(allocator, full_path) catch 0;
             } else {
                 const stat = dir.statFile(item.name) catch continue;
                 entry.size = stat.size;
