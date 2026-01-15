@@ -18,8 +18,9 @@
     "test": "zig build test",
     "check--------------------------------": "",
     "util:format": "zig fmt src/",
+    "util:lint": "zig fmt --check src/ && zig build",
     "util:clean": "rm -rf zig-out zig-cache .zig-cache",
-    "util:check": "STATUS=0; bun run util:format || STATUS=1; bun run test || STATUS=1; exit $STATUS"
+    "util:check": "STATUS=0; bun run util:lint || STATUS=1; bun run test || STATUS=1; exit $STATUS"
   },
   "devDependencies": {}
 }

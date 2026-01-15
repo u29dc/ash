@@ -5,6 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
+
+	"github.com/charlievieth/fastwalk"
 )
 
 // MoveToTrash moves a file or directory to the macOS Trash.
@@ -40,8 +43,10 @@ func moveToTrashFallback(path string) error {
 	baseName := filepath.Base(path)
 	destPath := filepath.Join(trashDir, baseName)
 
+	// Cap iterations at 100 to prevent infinite loops
+	const maxTrashIterations = 100
 	counter := 1
-	for {
+	for counter <= maxTrashIterations {
 		if _, err := os.Stat(destPath); os.IsNotExist(err) {
 			break
 		}
@@ -49,6 +54,9 @@ func moveToTrashFallback(path string) error {
 		name := baseName[:len(baseName)-len(ext)]
 		destPath = filepath.Join(trashDir, fmt.Sprintf("%s %d%s", name, counter, ext))
 		counter++
+	}
+	if counter > maxTrashIterations {
+		return fmt.Errorf("too many files with name %q in trash", baseName)
 	}
 
 	return os.Rename(path, destPath)
@@ -85,18 +93,25 @@ func GetTrashSize() (int64, error) {
 
 	trashDir := filepath.Join(homeDir, ".Trash")
 
-	var size int64
-	err = filepath.Walk(trashDir, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
+	var size atomic.Int64
+
+	conf := fastwalk.Config{
+		Follow: false,
+	}
+
+	err = fastwalk.Walk(&conf, trashDir, func(_ string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
 			return nil
 		}
-		if !info.IsDir() {
-			size += info.Size()
+		if !d.IsDir() {
+			if info, infoErr := d.Info(); infoErr == nil {
+				size.Add(info.Size())
+			}
 		}
 		return nil
 	})
 
-	return size, err
+	return size.Load(), err
 }
 
 // GetTrashItemCount returns the number of items in Trash.

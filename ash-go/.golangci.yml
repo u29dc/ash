@@ -8,15 +8,19 @@ linters:
   default: standard
   enable:
     - bodyclose
+    - cyclop
+    - dupl
     - durationcheck
     - errorlint
     - exhaustive
+    - funlen
     - goconst
     - gocritic
     - gosec
     - misspell
     - nakedret
     - revive
+    - staticcheck
     - unconvert
     - unparam
     - wastedassign
@@ -49,13 +53,11 @@ linters:
 
     gosec:
       excludes:
-        - G104
-        - G204
-        - G301
+        - G104  # Unhandled errors - too noisy, covered by errcheck
+        - G301  # Directory permissions
         - G302  # File permissions in test utilities
-        - G304
-        - G306
-        - G115
+        - G306  # Poor file permissions
+        - G115  # Integer overflow conversion
 
     revive:
       rules:
@@ -88,6 +90,13 @@ linters:
     nakedret:
       max-func-lines: 30
 
+    cyclop:
+      max-complexity: 10
+
+    funlen:
+      lines: 60
+      statements: 40
+
   exclusions:
     presets:
       - comments
@@ -98,6 +107,8 @@ linters:
           - goconst
           - gosec
           - errcheck
+          - funlen
+          - dupl
       - text: "Error return value of .* is not checked"
         linters:
           - errcheck
@@ -106,6 +117,69 @@ linters:
         source: "\\.(Model)"
         linters:
           - errcheck
+      # Bubble Tea Update functions naturally have high complexity due to message handling
+      - path: internal/app/app\.go
+        text: "calculated cyclomatic complexity for function (Update|handleConfirm)"
+        linters:
+          - cyclop
+      - path: internal/app/app\.go
+        text: "Function 'Update'"
+        linters:
+          - funlen
+      # Scanner and cleaner modules have inherent complexity from filesystem operations
+      - path: internal/scanner/
+        text: "calculated cyclomatic complexity"
+        linters:
+          - cyclop
+      - path: internal/scanner/
+        linters:
+          - funlen
+      - path: internal/cleaner/
+        text: "calculated cyclomatic complexity"
+        linters:
+          - cyclop
+      - path: internal/cleaner/
+        linters:
+          - funlen
+      # Module scan functions share similar patterns by design
+      - path: internal/cleaner/modules/
+        linters:
+          - dupl
+          - funlen
+      # TUI styles are declarative and naturally long
+      - path: internal/tui/styles\.go
+        linters:
+          - funlen
+      # G204: Subprocess with variable - controlled internal commands
+      - path: internal/cleaner/trash\.go
+        text: "G204"
+        linters:
+          - gosec
+      - path: internal/maintenance/commands\.go
+        text: "G204"
+        linters:
+          - gosec
+      # G304: File inclusion via variable - paths are validated/controlled
+      - path: pkg/plist/plist\.go
+        text: "G304"
+        linters:
+          - gosec
+      - path: internal/config/config\.go
+        text: "G304"
+        linters:
+          - gosec
+      - path: internal/scanner/orphan\.go
+        text: "G304"
+        linters:
+          - gosec
+      - path: internal/cleaner/modules/apps\.go
+        text: "G304"
+        linters:
+          - gosec
+      # Test utilities
+      - path: tests/testutil/
+        linters:
+          - gosec
 
 output:
   formats:

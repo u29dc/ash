@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+
+	"github.com/charlievieth/fastwalk"
 
 	"ash/internal/safety"
 	"ash/internal/scanner"
@@ -113,15 +116,23 @@ func (m *CachesModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 }
 
 func calcDirSize(path string) int64 {
-	var size int64
-	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+	var size atomic.Int64
+
+	conf := fastwalk.Config{
+		Follow: false,
+	}
+
+	_ = fastwalk.Walk(&conf, path, func(_ string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if !info.IsDir() {
-			size += info.Size()
+		if !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				size.Add(info.Size())
+			}
 		}
 		return nil
 	})
-	return size
+
+	return size.Load()
 }

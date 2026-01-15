@@ -126,11 +126,11 @@ pub const Screen = struct {
     }
 
     /// Pad text to fixed width
-    pub fn writePadded(self: *Screen, text: []const u8, width: usize, align: enum { left, right, center }) !void {
+    pub fn writePadded(self: *Screen, text: []const u8, width: usize, alignment: enum { left, right, center }) !void {
         const len = @min(text.len, width);
         const padding = if (width > len) width - len else 0;
 
-        switch (align) {
+        switch (alignment) {
             .left => {
                 try self.buffer.appendSlice(text[0..len]);
                 for (0..padding) |_| try self.buffer.append(' ');

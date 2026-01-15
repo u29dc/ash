@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/charlievieth/fastwalk"
@@ -303,17 +304,25 @@ func (s *DefaultScanner) processFile(
 }
 
 func (s *DefaultScanner) calcDirSize(path string) int64 {
-	var size int64
-	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+	var size atomic.Int64
+
+	conf := fastwalk.Config{
+		Follow: false,
+	}
+
+	_ = fastwalk.Walk(&conf, path, func(_ string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if !info.IsDir() {
-			size += info.Size()
+		if !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				size.Add(info.Size())
+			}
 		}
 		return nil
 	})
-	return size
+
+	return size.Load()
 }
 
 func (s *DefaultScanner) assessRisk(path string, category Category) RiskLevel {
@@ -337,9 +346,10 @@ func (s *DefaultScanner) assessRisk(path string, category Category) RiskLevel {
 // ScanAll performs a full scan of all categories and returns a ScanResult.
 func (s *DefaultScanner) ScanAll(ctx context.Context, opts ScanOptions) (*ScanResult, error) {
 	start := time.Now()
+	// Pre-allocate with reasonable initial capacity to reduce reallocations
 	result := &ScanResult{
-		Entries: make([]Entry, 0),
-		Errors:  make([]ScanError, 0),
+		Entries: make([]Entry, 0, 256),
+		Errors:  make([]ScanError, 0, 16),
 	}
 
 	entries, errs := s.Scan(ctx, opts)

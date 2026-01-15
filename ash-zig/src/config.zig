@@ -39,15 +39,11 @@ pub fn load(allocator: std.mem.Allocator) !Config {
     const path = try configPath(allocator);
     defer allocator.free(path);
 
-    const file = std.fs.openFileAbsolute(path, .{}) catch return default_config;
-    defer file.close();
+    // Check if config file exists, otherwise return defaults
+    std.fs.accessAbsolute(path, .{}) catch return default_config;
 
-    const content = file.readToEndAlloc(allocator, 1024 * 64) catch return default_config;
-    defer allocator.free(content);
-
-    // Simple JSON parsing - just return defaults for now
-    // Full JSON parsing would require more complex implementation
-    _ = content;
+    // TODO: Implement actual JSON parsing when needed
+    // For now, just return defaults
     return default_config;
 }
 
@@ -126,4 +122,72 @@ test "default config" {
     try std.testing.expectEqual(@as(u64, 0), config.min_size);
     try std.testing.expect(config.use_trash);
     try std.testing.expect(!config.dry_run);
+}
+
+test "default values functions" {
+    try std.testing.expectEqual(@as(u64, 0), defaultMinSize());
+    try std.testing.expectEqual(@as(usize, 4), defaultParallelism());
+    try std.testing.expectEqual(@as(u64, 1024 * 1024 * 1024), sizeLimitLarge());
+}
+
+test "valid sort orders" {
+    const orders = validSortOrders();
+    try std.testing.expectEqual(@as(usize, 3), orders.len);
+    try std.testing.expectEqual(SortOrder.size, orders[0]);
+    try std.testing.expectEqual(SortOrder.name, orders[1]);
+    try std.testing.expectEqual(SortOrder.date, orders[2]);
+}
+
+test "config path generation" {
+    const allocator = std.testing.allocator;
+
+    const cfg_path = configPath(allocator) catch |err| {
+        // If HOME is not set, this will fail - that's expected in some test environments
+        if (err == error.HomeNotFound) return;
+        return err;
+    };
+    defer allocator.free(cfg_path);
+
+    // Path should end with /config.json
+    try std.testing.expect(std.mem.endsWith(u8, cfg_path, "/config.json"));
+    try std.testing.expect(std.mem.indexOf(u8, cfg_path, ".config/ash") != null);
+}
+
+test "config dir generation" {
+    const allocator = std.testing.allocator;
+
+    const cfg_dir = configDir(allocator) catch |err| {
+        // If HOME is not set, this will fail - that's expected in some test environments
+        if (err == error.HomeNotFound) return;
+        return err;
+    };
+    defer allocator.free(cfg_dir);
+
+    // Dir should end with /ash
+    try std.testing.expect(std.mem.endsWith(u8, cfg_dir, "/.config/ash"));
+}
+
+test "load returns defaults for missing config" {
+    const allocator = std.testing.allocator;
+
+    // Load should return defaults when config file doesn't exist
+    const config = load(allocator) catch |err| {
+        // If HOME is not set, this will fail - that's expected
+        if (err == error.HomeNotFound) return;
+        return err;
+    };
+
+    // Should get default values
+    try std.testing.expectEqual(@as(u64, 0), config.min_size);
+    try std.testing.expect(config.use_trash);
+}
+
+test "default categories" {
+    // Verify default categories include expected values
+    try std.testing.expectEqual(@as(usize, 5), default_categories.len);
+    try std.testing.expectEqual(scanner.Category.caches, default_categories[0]);
+    try std.testing.expectEqual(scanner.Category.logs, default_categories[1]);
+    try std.testing.expectEqual(scanner.Category.xcode, default_categories[2]);
+    try std.testing.expectEqual(scanner.Category.homebrew, default_categories[3]);
+    try std.testing.expectEqual(scanner.Category.browsers, default_categories[4]);
 }

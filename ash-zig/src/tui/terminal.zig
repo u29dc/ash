@@ -165,11 +165,11 @@ fn parseInput(bytes: []const u8) Event {
     if (bytes.len == 1) {
         const c = bytes[0];
         return switch (c) {
-            0x00...0x1a => .{ .key = .{ .ctrl = c + 'a' - 1 } },
+            '\t' => .{ .key = .tab }, // 0x09
+            '\n', '\r' => .{ .key = .enter }, // 0x0A, 0x0D
             0x1b => .{ .key = .escape },
             0x7f => .{ .key = .backspace },
-            '\r', '\n' => .{ .key = .enter },
-            '\t' => .{ .key = .tab },
+            0x00...0x08, 0x0b, 0x0c, 0x0e...0x1a => .{ .key = .{ .ctrl = c + 'a' - 1 } },
             else => .{ .key = .{ .char = c } },
         };
     }

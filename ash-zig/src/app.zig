@@ -347,7 +347,7 @@ pub const App = struct {
             const entries = cat.scanFn(self.allocator) catch continue;
             defer entries.deinit();
 
-            for (entries.items) |entry| {
+            for (entries.items) |*entry| {
                 try result.addEntry(entry);
             }
         }

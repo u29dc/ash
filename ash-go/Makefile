@@ -65,18 +65,32 @@ coverage: test
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
+# Coverage threshold check (fails if < 70%)
+COVERAGE_THRESHOLD := 70
+coverage-check: test
+	@echo "Checking coverage threshold ($(COVERAGE_THRESHOLD)%)..."
+	@COVERAGE=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+	COVERAGE_INT=$$(echo "$$COVERAGE" | cut -d. -f1); \
+	if [ "$$COVERAGE_INT" -lt "$(COVERAGE_THRESHOLD)" ]; then \
+		echo "Coverage $$COVERAGE% is below threshold $(COVERAGE_THRESHOLD)%"; \
+		exit 1; \
+	else \
+		echo "Coverage $$COVERAGE% meets threshold $(COVERAGE_THRESHOLD)%"; \
+	fi
+
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  build        - Build the binary"
-	@echo "  build-release- Build release binary (static)"
-	@echo "  test         - Run tests with race detector"
-	@echo "  test-short   - Run short tests"
-	@echo "  lint         - Run linter"
-	@echo "  fmt          - Format code"
-	@echo "  check        - Run all quality checks"
-	@echo "  clean        - Remove build artifacts"
-	@echo "  install      - Install to /usr/local/bin"
-	@echo "  dev          - Run in development mode"
-	@echo "  deps         - Download and tidy dependencies"
-	@echo "  coverage     - Generate coverage report"
+	@echo "  build          - Build the binary"
+	@echo "  build-release  - Build release binary (static)"
+	@echo "  test           - Run tests with race detector"
+	@echo "  test-short     - Run short tests"
+	@echo "  lint           - Run linter"
+	@echo "  fmt            - Format code"
+	@echo "  check          - Run all quality checks"
+	@echo "  clean          - Remove build artifacts"
+	@echo "  install        - Install to /usr/local/bin"
+	@echo "  dev            - Run in development mode"
+	@echo "  deps           - Download and tidy dependencies"
+	@echo "  coverage       - Generate coverage report"
+	@echo "  coverage-check - Fail if coverage < 70%"
