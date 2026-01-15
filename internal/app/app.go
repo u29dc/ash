@@ -32,15 +32,15 @@ const (
 
 // KeyMap defines the key bindings.
 type KeyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Select   key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	Select    key.Binding
 	SelectAll key.Binding
-	Confirm  key.Binding
-	Back     key.Binding
-	Quit     key.Binding
-	Help     key.Binding
-	Tab      key.Binding
+	Confirm   key.Binding
+	Back      key.Binding
+	Quit      key.Binding
+	Help      key.Binding
+	Tab       key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings.
@@ -104,9 +104,9 @@ type Model struct {
 	selectedCount int
 
 	// List state
-	cursor     int
-	offset     int
-	pageSize   int
+	cursor   int
+	offset   int
+	pageSize int
 
 	// Scan state
 	scanning     bool
@@ -114,9 +114,8 @@ type Model struct {
 	scanMessage  string
 
 	// Clean state
-	cleaning      bool
-	cleanProgress float64
-	cleanStats    *cleaner.CleanStats
+	cleaning   bool
+	cleanStats *cleaner.CleanStats
 
 	// Maintenance state
 	maintenanceCommands []*maintenance.Command
@@ -290,6 +289,8 @@ func (m *Model) handleBack() (tea.Model, tea.Cmd) {
 		m.cursor = 0
 	case ViewConfirm:
 		m.currentView = ViewResults
+	default:
+		// No action for other views
 	}
 	return m, nil
 }
@@ -311,6 +312,8 @@ func (m *Model) handleUp() (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
+	default:
+		// No action for other views
 	}
 	return m, nil
 }
@@ -332,6 +335,8 @@ func (m *Model) handleDown() (tea.Model, tea.Cmd) {
 		if m.cursor < 2 { // 3 options: Scan, Maintenance, Quit
 			m.cursor++
 		}
+	default:
+		// No action for other views
 	}
 	return m, nil
 }
@@ -412,6 +417,9 @@ func (m *Model) handleConfirm() (tea.Model, tea.Cmd) {
 	case ViewMaintenance:
 		cmd := m.maintenanceCommands[m.maintenanceCursor]
 		return m, RunMaintenanceCommand(m.ctx, cmd)
+
+	default:
+		// No action for other views
 	}
 
 	return m, nil

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"ash/internal/scanner"
 	"ash/internal/safety"
+	"ash/internal/scanner"
 )
 
 // XcodeModule handles Xcode-related cleanup.
@@ -85,7 +85,7 @@ func (m *XcodeModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 			}
 
 			// Determine risk level based on path
-			risk := m.assessRisk(basePath, item.Name())
+			risk := m.assessRisk(basePath)
 
 			entries = append(entries, scanner.Entry{
 				Path:     path,
@@ -102,7 +102,7 @@ func (m *XcodeModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 	return entries, nil
 }
 
-func (m *XcodeModule) assessRisk(basePath, name string) scanner.RiskLevel {
+func (m *XcodeModule) assessRisk(basePath string) scanner.RiskLevel {
 	// Archives may contain dSYMs needed for crash symbolication
 	if strings.Contains(basePath, "Archives") {
 		return scanner.RiskCaution

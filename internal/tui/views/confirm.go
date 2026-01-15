@@ -12,12 +12,12 @@ import (
 
 // ConfirmView renders the deletion confirmation screen.
 type ConfirmView struct {
-	styles        tui.Styles
-	entries       []scanner.Entry
-	totalSize     int64
-	cursor        int // 0 = Cancel, 1 = Confirm
-	width         int
-	height        int
+	styles    tui.Styles
+	entries   []scanner.Entry
+	totalSize int64
+	cursor    int // 0 = Cancel, 1 = Confirm
+	width     int
+	height    int
 }
 
 // NewConfirmView creates a new confirm view.
@@ -126,11 +126,11 @@ func (v *ConfirmView) renderButtons() string {
 
 	// Highlight selected button
 	if v.cursor == 0 {
-		cancelStyle = cancelStyle.Copy().
+		cancelStyle = cancelStyle.
 			Background(lipgloss.Color("#737373")).
 			Bold(true)
 	} else {
-		confirmStyle = confirmStyle.Copy().
+		confirmStyle = confirmStyle.
 			Background(lipgloss.Color("#dc2626")).
 			Bold(true)
 	}

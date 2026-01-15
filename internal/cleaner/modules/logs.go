@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"ash/internal/scanner"
 	"ash/internal/safety"
+	"ash/internal/scanner"
 )
 
 // LogsModule handles log file cleanup.

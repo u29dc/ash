@@ -251,6 +251,8 @@ func (v *ResultsView) renderEntry(entry scanner.Entry, isCursor bool, nameWidth 
 	// Category indicator
 	catStyle := v.styles.CategorySafe
 	switch entry.Risk {
+	case scanner.RiskSafe:
+		catStyle = v.styles.CategorySafe
 	case scanner.RiskCaution:
 		catStyle = v.styles.CategoryCaution
 	case scanner.RiskDangerous:
@@ -264,8 +266,8 @@ func (v *ResultsView) renderEntry(entry scanner.Entry, isCursor bool, nameWidth 
 
 	if isCursor {
 		bg := lipgloss.Color("#262626")
-		nameStyle = nameStyle.Copy().Background(bg)
-		sizeStyle = sizeStyle.Copy().Background(bg)
+		nameStyle = nameStyle.Background(bg)
+		sizeStyle = sizeStyle.Background(bg)
 	}
 
 	return fmt.Sprintf("%s%s %s %s %s",

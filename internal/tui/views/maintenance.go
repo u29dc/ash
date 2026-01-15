@@ -117,8 +117,8 @@ func (v *MaintenanceView) renderCommand(cmd *maintenance.Command, isCursor bool)
 
 	if isCursor {
 		bg := lipgloss.Color("#262626")
-		titleStyle = titleStyle.Copy().Background(bg).Bold(true)
-		descStyle = descStyle.Copy().Background(bg)
+		titleStyle = titleStyle.Background(bg).Bold(true)
+		descStyle = descStyle.Background(bg)
 	}
 
 	// Sudo indicator

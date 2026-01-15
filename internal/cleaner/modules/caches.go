@@ -4,9 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"ash/internal/scanner"
 	"ash/internal/safety"
+	"ash/internal/scanner"
 )
 
 // CachesModule handles user-level cache cleanup.
@@ -77,7 +78,7 @@ func (m *CachesModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 			browserPrefixes := []string{"com.apple.Safari", "Google", "Firefox", "com.brave.Browser"}
 			skip := false
 			for _, prefix := range browserPrefixes {
-				if item.Name() == prefix || filepath.HasPrefix(item.Name(), prefix) {
+				if item.Name() == prefix || strings.HasPrefix(item.Name(), prefix) {
 					skip = true
 					break
 				}

@@ -17,11 +17,11 @@ type MenuItem struct {
 
 // HomeView renders the home screen.
 type HomeView struct {
-	styles   tui.Styles
-	items    []MenuItem
-	cursor   int
-	width    int
-	height   int
+	styles tui.Styles
+	items  []MenuItem
+	cursor int
+	width  int
+	height int
 }
 
 // NewHomeView creates a new home view.
@@ -116,10 +116,10 @@ func (v *HomeView) Render() string {
 
 		if i == v.cursor {
 			cursor = "> "
-			titleStyle = titleStyle.Copy().
+			titleStyle = titleStyle.
 				Background(lipgloss.Color("#262626")).
 				Bold(true)
-			descStyle = descStyle.Copy().
+			descStyle = descStyle.
 				Background(lipgloss.Color("#262626"))
 		}
 

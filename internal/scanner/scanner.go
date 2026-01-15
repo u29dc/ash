@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -255,7 +256,7 @@ func (s *DefaultScanner) scanPath(
 		return nil
 	}
 
-	if err := fastwalk.Walk(&conf, basePath, walkFn); err != nil && err != context.Canceled {
+	if err := fastwalk.Walk(&conf, basePath, walkFn); err != nil && !errors.Is(err, context.Canceled) {
 		select {
 		case errs <- err:
 		case <-ctx.Done():

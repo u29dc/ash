@@ -8,13 +8,13 @@ import (
 
 // Analysis contains analyzed scan results.
 type Analysis struct {
-	Entries        []Entry
-	TotalSize      int64
-	TotalCount     int
-	ByCategory     map[Category]CategorySummary
-	TopEntries     []Entry
-	SelectedSize   int64
-	SelectedCount  int
+	Entries       []Entry
+	TotalSize     int64
+	TotalCount    int
+	ByCategory    map[Category]CategorySummary
+	TopEntries    []Entry
+	SelectedSize  int64
+	SelectedCount int
 }
 
 // CategorySummary summarizes entries for a single category.

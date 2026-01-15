@@ -56,7 +56,11 @@ func IsSafePath(path string) bool {
 	// Check never-delete patterns
 	base := filepath.Base(path)
 	for _, pattern := range neverDeletePatterns {
-		if matched, _ := filepath.Match(pattern, base); matched {
+		matched, err := filepath.Match(pattern, base)
+		if err != nil {
+			return false // Treat invalid patterns as blocked for safety
+		}
+		if matched {
 			return false
 		}
 	}

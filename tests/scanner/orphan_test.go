@@ -3,6 +3,7 @@ package scanner_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,14 +65,16 @@ func TestOrphanFinder_GenerateSearchTerms(t *testing.T) {
 					}
 				}
 				if !found {
-					// It's ok if lowercase versions are there instead
+					// Check lowercase version
+					expLower := strings.ToLower(exp)
 					for _, term := range terms {
-						if term == exp {
+						if term == expLower {
 							found = true
 							break
 						}
 					}
 				}
+				assert.True(t, found, "Expected term %q or its lowercase to be present", exp)
 			}
 		})
 	}

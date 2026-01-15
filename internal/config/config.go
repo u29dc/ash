@@ -18,7 +18,7 @@ type Config struct {
 	UseTrash bool `json:"use_trash"`
 
 	// UI
-	ShowSizes   bool `json:"show_sizes"`
+	ShowSizes   bool   `json:"show_sizes"`
 	SortBy      string `json:"sort_by"` // size, name, date
 	Parallelism int    `json:"parallelism"`
 }
@@ -68,8 +68,8 @@ func (c *Config) Save() error {
 	}
 
 	// Ensure config directory exists
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		return err
+	if mkdirErr := os.MkdirAll(filepath.Dir(configPath), 0755); mkdirErr != nil {
+		return mkdirErr
 	}
 
 	data, err := json.MarshalIndent(c, "", "  ")

@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"ash/internal/scanner"
 	"ash/internal/safety"
+	"ash/internal/scanner"
 )
 
 // BrowsersModule handles browser cache cleanup.
@@ -105,12 +105,12 @@ func (m *BrowsersModule) identifyBrowser(path string) string {
 	base := filepath.Base(path)
 
 	browsers := map[string]string{
-		"com.apple.Safari":       "Safari",
-		"Chrome":                 "Google Chrome",
-		"Firefox":                "Firefox",
-		"com.brave.Browser":      "Brave",
-		"com.microsoft.edgemac":  "Microsoft Edge",
-		"org.mozilla.firefox":    "Firefox",
+		"com.apple.Safari":        "Safari",
+		"Chrome":                  "Google Chrome",
+		"Firefox":                 "Firefox",
+		"com.brave.Browser":       "Brave",
+		"com.microsoft.edgemac":   "Microsoft Edge",
+		"org.mozilla.firefox":     "Firefox",
 		"com.operasoftware.Opera": "Opera",
 	}
 

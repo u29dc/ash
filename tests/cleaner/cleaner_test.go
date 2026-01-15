@@ -15,9 +15,9 @@ import (
 
 func TestCleaner_New(t *testing.T) {
 	tests := []struct {
-		name     string
-		opts     []cleaner.Option
-		wantDry  bool
+		name      string
+		opts      []cleaner.Option
+		wantDry   bool
 		wantTrash bool
 	}{
 		{

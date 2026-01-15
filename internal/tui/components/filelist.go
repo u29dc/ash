@@ -194,8 +194,8 @@ func (f *FileList) renderEntry(entry scanner.Entry, isCursor bool, nameWidth int
 
 	if isCursor {
 		cursorStyle = f.styles.ListItemSelected
-		nameStyle = nameStyle.Copy().Background(lipgloss.Color("#262626"))
-		sizeStyle = sizeStyle.Copy().Background(lipgloss.Color("#262626"))
+		nameStyle = nameStyle.Background(lipgloss.Color("#262626"))
+		sizeStyle = sizeStyle.Background(lipgloss.Color("#262626"))
 	}
 
 	return fmt.Sprintf("%s%s %s %s",

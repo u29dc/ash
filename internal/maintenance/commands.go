@@ -9,12 +9,12 @@ import (
 
 // Command represents a maintenance command.
 type Command struct {
-	Name        string
-	Description string
-	Cmd         string
-	Args        []string
+	Name         string
+	Description  string
+	Cmd          string
+	Args         []string
 	RequiresSudo bool
-	Useful      bool
+	Useful       bool
 }
 
 // CommandResult represents the result of running a maintenance command.

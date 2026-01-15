@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"ash/internal/scanner"
 	"ash/internal/safety"
+	"ash/internal/scanner"
 )
 
 // AppsModule handles app leftover cleanup.

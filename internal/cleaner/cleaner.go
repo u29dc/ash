@@ -5,8 +5,8 @@ import (
 	"errors"
 	"sync"
 
-	"ash/internal/scanner"
 	"ash/internal/safety"
+	"ash/internal/scanner"
 )
 
 // CleanResult represents the result of a cleanup operation.
@@ -32,7 +32,6 @@ type Cleaner struct {
 	dryRun      bool
 	useTrash    bool
 	parallelism int
-	mu          sync.Mutex
 }
 
 // Option configures the Cleaner.

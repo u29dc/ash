@@ -18,7 +18,7 @@
     "test:verbose": "go test -v -race ./...",
     "test:coverage": "go test -race -coverprofile=coverage.out ./... && go tool cover -html=coverage.out -o coverage.html",
     "check--------------------------------": "",
-    "util:format": "gofumpt -w . && go fmt ./...",
+    "util:format": "go fmt ./...",
     "util:lint": "golangci-lint run ./...",
     "util:types": "go vet ./...",
     "util:clean": "rm -rf bin/ coverage.out coverage.html",
