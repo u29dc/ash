@@ -185,5 +185,55 @@ pub fn getTrashInfo(allocator: std.mem.Allocator) TrashInfo {
 test "getTrashInfo" {
     const allocator = std.testing.allocator;
     const info = getTrashInfo(allocator);
-    _ = info;
+    // Basic sanity checks
+    try std.testing.expectEqualStrings("~/.Trash", info.path);
+    // item_count and total_size can be any value (depends on actual trash contents)
+}
+
+test "getTrashSize" {
+    const allocator = std.testing.allocator;
+    // Should not crash or leak memory
+    _ = getTrashSize(allocator);
+}
+
+test "getTrashItemCount" {
+    const allocator = std.testing.allocator;
+    // Should not crash or leak memory
+    _ = getTrashItemCount(allocator);
+}
+
+test "TrashError types" {
+    // Verify error types are properly defined
+    const e1: TrashError = TrashError.AppleScriptFailed;
+    const e2: TrashError = TrashError.ManualMoveFailed;
+    const e3: TrashError = TrashError.PathNotFound;
+    const e4: TrashError = TrashError.AccessDenied;
+    try std.testing.expect(e1 != e2);
+    try std.testing.expect(e2 != e3);
+    try std.testing.expect(e3 != e4);
+}
+
+test "moveToTrash - nonexistent file" {
+    const allocator = std.testing.allocator;
+
+    // Trying to move a nonexistent file should return PathNotFound
+    const result = moveToTrash(allocator, "/nonexistent/path/to/file/12345");
+    try std.testing.expectError(TrashError.PathNotFound, result);
+}
+
+test "permanentDelete - nonexistent file" {
+    // Trying to delete a nonexistent file should error
+    const result = permanentDelete("/nonexistent/path/to/file/12345");
+    try std.testing.expectError(error.FileNotFound, result);
+}
+
+test "TrashInfo struct" {
+    const info = TrashInfo{
+        .item_count = 5,
+        .total_size = 1024 * 1024,
+        .path = "~/.Trash",
+    };
+    try std.testing.expectEqual(@as(usize, 5), info.item_count);
+    try std.testing.expectEqual(@as(u64, 1024 * 1024), info.total_size);
+    try std.testing.expectEqualStrings("~/.Trash", info.path);
 }

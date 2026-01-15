@@ -254,3 +254,107 @@ test "requiresConfirmation" {
     // Small files
     try std.testing.expect(!requiresConfirmation(allocator, "/tmp/small", 1024));
 }
+
+// Edge case tests for safety guards
+test "isSafePath - nested protected paths" {
+    const allocator = std.testing.allocator;
+
+    // Deeply nested paths under protected directories should be blocked
+    try std.testing.expect(!isSafePath(allocator, "~/.ssh/keys/backup/id_rsa"));
+    try std.testing.expect(!isSafePath(allocator, "~/.gnupg/private-keys-v1.d/key.gpg"));
+    try std.testing.expect(!isSafePath(allocator, "/System/Library/Frameworks/Foundation.framework"));
+    try std.testing.expect(!isSafePath(allocator, "~/Library/Keychains/backup/old.keychain"));
+
+    // Git directories at any depth
+    try std.testing.expect(!isSafePath(allocator, "/home/user/projects/myapp/.git"));
+    try std.testing.expect(!isSafePath(allocator, "/home/user/projects/myapp/.git/config"));
+    try std.testing.expect(!isSafePath(allocator, "/home/user/projects/myapp/.git/objects/pack"));
+}
+
+test "isSafePath - pattern matching" {
+    const allocator = std.testing.allocator;
+
+    // Certificate/key patterns should be blocked
+    try std.testing.expect(!isSafePath(allocator, "/tmp/server.pem"));
+    try std.testing.expect(!isSafePath(allocator, "/tmp/private.key"));
+    try std.testing.expect(!isSafePath(allocator, "/tmp/cert.p12"));
+    try std.testing.expect(!isSafePath(allocator, "/tmp/id_rsa"));
+    try std.testing.expect(!isSafePath(allocator, "/tmp/id_rsa.pub"));
+    try std.testing.expect(!isSafePath(allocator, "/tmp/id_ed25519"));
+    try std.testing.expect(!isSafePath(allocator, "/tmp/known_hosts"));
+    try std.testing.expect(!isSafePath(allocator, "/tmp/authorized_keys"));
+
+    // Keychain patterns
+    try std.testing.expect(!isSafePath(allocator, "/tmp/login.keychain-db"));
+    try std.testing.expect(!isSafePath(allocator, "/tmp/backup.keychain"));
+}
+
+test "isSafePath - unicode paths" {
+    const allocator = std.testing.allocator;
+
+    // Safe unicode paths should work
+    try std.testing.expect(isSafePath(allocator, "/tmp/cache-\xc3\xa9\xc3\xa8\xc3\xa0")); // cache-eea with accents
+    try std.testing.expect(isSafePath(allocator, "/tmp/\xe4\xb8\xad\xe6\x96\x87")); // Chinese characters
+
+    // But protected patterns should still be blocked with unicode in path
+    try std.testing.expect(!isSafePath(allocator, "/tmp/\xe4\xb8\xad\xe6\x96\x87/.git"));
+}
+
+test "isSafePath - empty and edge cases" {
+    const allocator = std.testing.allocator;
+
+    // Empty path expands to "" which is safe (doesn't match any blocked patterns)
+    try std.testing.expect(isSafePath(allocator, ""));
+
+    // Just ~ should expand to home and be safe
+    try std.testing.expect(isSafePath(allocator, "~"));
+
+    // Paths with trailing slashes
+    try std.testing.expect(isSafePath(allocator, "/tmp/cache/"));
+    try std.testing.expect(!isSafePath(allocator, "~/.ssh/"));
+}
+
+test "validatePaths" {
+    const allocator = std.testing.allocator;
+
+    const paths = [_][]const u8{
+        "/tmp/safe1",
+        "~/.ssh/id_rsa",
+        "/tmp/safe2",
+        "/System/Library",
+        "/tmp/safe3",
+    };
+
+    const result = try validatePaths(allocator, &paths);
+    defer result.safe.deinit();
+    defer result.blocked.deinit();
+
+    // Should have 3 safe paths
+    try std.testing.expectEqual(@as(usize, 3), result.safe.items.len);
+    // Should have 2 blocked paths
+    try std.testing.expectEqual(@as(usize, 2), result.blocked.items.len);
+}
+
+test "sanitizePath" {
+    const allocator = std.testing.allocator;
+
+    // Normal path should pass through
+    const normal = try sanitizePath(allocator, "/tmp/test");
+    defer allocator.free(normal);
+    try std.testing.expectEqualStrings("/tmp/test", normal);
+
+    // Path with null bytes should be cleaned
+    const with_null = try sanitizePath(allocator, "/tmp/te\x00st");
+    defer allocator.free(with_null);
+    try std.testing.expectEqualStrings("/tmp/test", with_null);
+
+    // Path with control characters should be cleaned
+    const with_ctrl = try sanitizePath(allocator, "/tmp/te\x01\x02st");
+    defer allocator.free(with_ctrl);
+    try std.testing.expectEqualStrings("/tmp/test", with_ctrl);
+
+    // Tab should be preserved
+    const with_tab = try sanitizePath(allocator, "/tmp/te\tst");
+    defer allocator.free(with_tab);
+    try std.testing.expectEqualStrings("/tmp/te\tst", with_tab);
+}

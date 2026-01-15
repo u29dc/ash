@@ -320,3 +320,143 @@ test "ScanResult operations" {
     try std.testing.expectEqual(@as(usize, 2), result.total_count);
     try std.testing.expectEqual(@as(u64, 3000), result.total_size);
 }
+
+test "Entry bundle ID" {
+    var entry = Entry{};
+
+    // Empty bundle ID should return null
+    try std.testing.expect(entry.bundleId() == null);
+
+    // Set bundle ID
+    entry.setBundleId("com.example.app");
+    const bid = entry.bundleId();
+    try std.testing.expect(bid != null);
+    try std.testing.expectEqualStrings("com.example.app", bid.?);
+}
+
+test "Entry formatted size" {
+    var entry = Entry{};
+    entry.size = 1024 * 1024; // 1 MB
+
+    const formatted = entry.formattedSize();
+    // Should contain "MB"
+    try std.testing.expect(std.mem.indexOf(u8, &formatted, "MB") != null);
+}
+
+test "Category descriptions" {
+    try std.testing.expectEqualStrings("Application Caches", Category.caches.description());
+    try std.testing.expectEqualStrings("Log Files", Category.logs.description());
+    try std.testing.expectEqualStrings("Xcode Data", Category.xcode.description());
+    try std.testing.expectEqualStrings("Homebrew Cache", Category.homebrew.description());
+    try std.testing.expectEqualStrings("Browser Caches", Category.browsers.description());
+    try std.testing.expectEqualStrings("App Leftovers", Category.app_data.description());
+}
+
+test "Category short names" {
+    try std.testing.expectEqualStrings("Caches", Category.caches.shortName());
+    try std.testing.expectEqualStrings("Logs", Category.logs.shortName());
+    try std.testing.expectEqualStrings("Xcode", Category.xcode.shortName());
+}
+
+test "RiskLevel symbols" {
+    try std.testing.expectEqualStrings("o", RiskLevel.safe.symbol());
+    try std.testing.expectEqualStrings("!", RiskLevel.caution.symbol());
+    try std.testing.expectEqualStrings("X", RiskLevel.dangerous.symbol());
+}
+
+test "ScanResult selection operations" {
+    const allocator = std.testing.allocator;
+    var result = ScanResult.init(allocator);
+    defer result.deinit();
+
+    var entry1 = Entry{};
+    entry1.setPath("/tmp/safe1");
+    entry1.setName("safe1");
+    entry1.size = 1000;
+
+    var entry2 = Entry{};
+    entry2.setPath("/tmp/safe2");
+    entry2.setName("safe2");
+    entry2.size = 2000;
+
+    try result.addEntry(&entry1);
+    try result.addEntry(&entry2);
+
+    // Initially no selection
+    try std.testing.expectEqual(@as(usize, 0), result.selectedCount());
+    try std.testing.expectEqual(@as(u64, 0), result.selectedSize());
+
+    // Toggle first entry
+    result.toggleSelection(0);
+    try std.testing.expectEqual(@as(usize, 1), result.selectedCount());
+    try std.testing.expectEqual(@as(u64, 1000), result.selectedSize());
+
+    // Select all
+    result.selectAll();
+    try std.testing.expectEqual(@as(usize, 2), result.selectedCount());
+    try std.testing.expectEqual(@as(u64, 3000), result.selectedSize());
+
+    // Deselect all
+    result.deselectAll();
+    try std.testing.expectEqual(@as(usize, 0), result.selectedCount());
+}
+
+test "ScanResult sorting" {
+    const allocator = std.testing.allocator;
+    var result = ScanResult.init(allocator);
+    defer result.deinit();
+
+    var entry1 = Entry{};
+    entry1.setPath("/test/small");
+    entry1.setName("small");
+    entry1.size = 100;
+
+    var entry2 = Entry{};
+    entry2.setPath("/test/large");
+    entry2.setName("large");
+    entry2.size = 10000;
+
+    var entry3 = Entry{};
+    entry3.setPath("/test/medium");
+    entry3.setName("medium");
+    entry3.size = 1000;
+
+    try result.addEntry(&entry1);
+    try result.addEntry(&entry2);
+    try result.addEntry(&entry3);
+
+    // Sort by size (descending)
+    result.sortBySize();
+    try std.testing.expectEqual(@as(u64, 10000), result.entries.items[0].size);
+    try std.testing.expectEqual(@as(u64, 1000), result.entries.items[1].size);
+    try std.testing.expectEqual(@as(u64, 100), result.entries.items[2].size);
+
+    // Sort by name (ascending)
+    result.sortByName();
+    try std.testing.expectEqualStrings("large", result.entries.items[0].name());
+    try std.testing.expectEqualStrings("medium", result.entries.items[1].name());
+    try std.testing.expectEqualStrings("small", result.entries.items[2].name());
+}
+
+test "ScanError" {
+    var err = ScanError{};
+    @memcpy(err.path_buf[0..10], "/tmp/error");
+    err.path_len = 10;
+    @memcpy(err.message_buf[0..13], "Access denied");
+    err.message_len = 13;
+    err.code = .permission_denied;
+
+    try std.testing.expectEqualStrings("/tmp/error", err.path());
+    try std.testing.expectEqualStrings("Access denied", err.message());
+    try std.testing.expectEqual(ErrorCode.permission_denied, err.code);
+}
+
+test "scanDirectory - nonexistent directory" {
+    const allocator = std.testing.allocator;
+
+    // Scanning a nonexistent directory should return empty list (not error)
+    const entries = try scanDirectory(allocator, "/nonexistent/path/12345", .caches, .safe);
+    defer entries.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), entries.items.len);
+}

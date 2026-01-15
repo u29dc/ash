@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
+	"github.com/charlievieth/fastwalk"
 	"howett.net/plist"
 )
 
@@ -179,17 +181,25 @@ func (o *OrphanFinder) getSize(path string, isDir bool) int64 {
 		return info.Size()
 	}
 
-	var size int64
-	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+	var size atomic.Int64
+
+	conf := fastwalk.Config{
+		Follow: false,
+	}
+
+	_ = fastwalk.Walk(&conf, path, func(_ string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if !info.IsDir() {
-			size += info.Size()
+		if !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				size.Add(info.Size())
+			}
 		}
 		return nil
 	})
-	return size
+
+	return size.Load()
 }
 
 // FindAllOrphans scans for leftovers from apps that are no longer installed.

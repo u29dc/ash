@@ -5,6 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
+
+	"github.com/charlievieth/fastwalk"
 )
 
 // MoveToTrash moves a file or directory to the macOS Trash.
@@ -90,18 +93,25 @@ func GetTrashSize() (int64, error) {
 
 	trashDir := filepath.Join(homeDir, ".Trash")
 
-	var size int64
-	err = filepath.Walk(trashDir, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
+	var size atomic.Int64
+
+	conf := fastwalk.Config{
+		Follow: false,
+	}
+
+	err = fastwalk.Walk(&conf, trashDir, func(_ string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
 			return nil
 		}
-		if !info.IsDir() {
-			size += info.Size()
+		if !d.IsDir() {
+			if info, infoErr := d.Info(); infoErr == nil {
+				size.Add(info.Size())
+			}
 		}
 		return nil
 	})
 
-	return size, err
+	return size.Load(), err
 }
 
 // GetTrashItemCount returns the number of items in Trash.

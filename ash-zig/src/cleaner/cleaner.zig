@@ -234,7 +234,7 @@ test "CleanStats" {
 
 test "Cleaner dry run" {
     const allocator = std.testing.allocator;
-    var cleaner = Cleaner.init(allocator, .{ .dry_run = true });
+    var cl = Cleaner.init(allocator, .{ .dry_run = true });
 
     var entries = [_]scanner.Entry{.{
         .selected = true,
@@ -243,8 +243,109 @@ test "Cleaner dry run" {
     entries[0].setPath("/tmp/test");
     entries[0].setName("test");
 
-    var stats = try cleaner.preview(&entries);
+    var stats = try cl.preview(&entries);
     defer stats.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), stats.total_count);
+}
+
+test "CleanResult error message" {
+    var result = CleanResult{};
+
+    // Test setting error message
+    result.setError("Permission denied");
+    const err_msg = result.errorMsg();
+    try std.testing.expect(err_msg != null);
+    try std.testing.expectEqualStrings("Permission denied", err_msg.?);
+
+    // Test empty error message
+    var result2 = CleanResult{};
+    try std.testing.expect(result2.errorMsg() == null);
+}
+
+test "CleanResult path handling" {
+    var result = CleanResult{};
+
+    // Test short path
+    result.setPath("/tmp/test");
+    try std.testing.expectEqualStrings("/tmp/test", result.path());
+
+    // Test path at max length (should truncate)
+    var long_path: [std.fs.max_path_bytes + 100]u8 = undefined;
+    @memset(&long_path, 'a');
+    result.setPath(&long_path);
+    try std.testing.expectEqual(std.fs.max_path_bytes, result.path_len);
+}
+
+test "CleanStats with mixed results" {
+    const allocator = std.testing.allocator;
+    var stats = CleanStats.init(allocator);
+    defer stats.deinit();
+
+    // Add successful result
+    var success_result = CleanResult{};
+    success_result.setPath("/tmp/success");
+    success_result.size = 1000;
+    success_result.success = true;
+    try stats.addResult(success_result);
+
+    // Add failed result
+    var failed_result = CleanResult{};
+    failed_result.setPath("/tmp/failed");
+    failed_result.size = 500;
+    failed_result.success = false;
+    failed_result.setError("Access denied");
+    try stats.addResult(failed_result);
+
+    // Verify counts
+    try std.testing.expectEqual(@as(usize, 2), stats.total_count);
+    try std.testing.expectEqual(@as(usize, 1), stats.success_count);
+    try std.testing.expectEqual(@as(usize, 1), stats.failed_count);
+    try std.testing.expectEqual(@as(u64, 1500), stats.total_size);
+    try std.testing.expectEqual(@as(u64, 1000), stats.cleaned_size);
+}
+
+test "Cleaner skips unselected entries" {
+    const allocator = std.testing.allocator;
+    var cl = Cleaner.init(allocator, .{ .dry_run = true });
+
+    var entries = [_]scanner.Entry{
+        .{ .selected = false, .size = 1000 },
+        .{ .selected = true, .size = 2000 },
+        .{ .selected = false, .size = 3000 },
+    };
+    entries[0].setPath("/tmp/test1");
+    entries[0].setName("test1");
+    entries[1].setPath("/tmp/test2");
+    entries[1].setName("test2");
+    entries[2].setPath("/tmp/test3");
+    entries[2].setName("test3");
+
+    var stats = try cl.clean(&entries);
+    defer stats.deinit();
+
+    // Only selected entry should be processed
+    try std.testing.expectEqual(@as(usize, 1), stats.total_count);
+    try std.testing.expectEqual(@as(u64, 2000), stats.total_size);
+}
+
+test "Cleaner blocks unsafe paths" {
+    const allocator = std.testing.allocator;
+    var cl = Cleaner.init(allocator, .{ .dry_run = true });
+
+    var entries = [_]scanner.Entry{.{
+        .selected = true,
+        .size = 1024,
+    }};
+    // Use a protected path
+    entries[0].setPath("~/.ssh/id_rsa");
+    entries[0].setName("id_rsa");
+
+    var stats = try cl.clean(&entries);
+    defer stats.deinit();
+
+    // Should process but fail due to safety guards
+    try std.testing.expectEqual(@as(usize, 1), stats.total_count);
+    try std.testing.expectEqual(@as(usize, 0), stats.success_count);
+    try std.testing.expectEqual(@as(usize, 1), stats.failed_count);
 }
