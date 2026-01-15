@@ -11,22 +11,8 @@ import (
 )
 
 // MoveToTrash moves a file or directory to the macOS Trash.
-// This is the safe deletion method that allows recovery.
+// Uses direct filesystem move to ~/.Trash to avoid Touch ID prompts.
 func MoveToTrash(path string) error {
-	// Use AppleScript to move to Trash (most reliable method)
-	script := fmt.Sprintf(`tell application "Finder" to delete POSIX file %q`, path)
-	cmd := exec.Command("osascript", "-e", script)
-
-	if err := cmd.Run(); err != nil {
-		// Fallback to mv command if osascript fails
-		return moveToTrashFallback(path)
-	}
-
-	return nil
-}
-
-// moveToTrashFallback uses a manual approach to move files to Trash.
-func moveToTrashFallback(path string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -43,10 +29,8 @@ func moveToTrashFallback(path string) error {
 	baseName := filepath.Base(path)
 	destPath := filepath.Join(trashDir, baseName)
 
-	// Cap iterations at 100 to prevent infinite loops
-	const maxTrashIterations = 100
 	counter := 1
-	for counter <= maxTrashIterations {
+	for counter <= 100 {
 		if _, err := os.Stat(destPath); os.IsNotExist(err) {
 			break
 		}
@@ -55,7 +39,7 @@ func moveToTrashFallback(path string) error {
 		destPath = filepath.Join(trashDir, fmt.Sprintf("%s %d%s", name, counter, ext))
 		counter++
 	}
-	if counter > maxTrashIterations {
+	if counter > 100 {
 		return fmt.Errorf("too many files with name %q in trash", baseName)
 	}
 
