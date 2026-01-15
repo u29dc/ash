@@ -1,17 +1,25 @@
 {
-  "name": "ash-zig",
+  "name": "ash",
   "version": "0.1.0",
-  "description": "macOS cleanup utility - Zig implementation",
+  "type": "module",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/u29dc/ash"
+  },
   "scripts": {
+    "dev----------------------------------": "",
     "dev": "zig build run",
+    "build--------------------------------": "",
     "build": "zig build",
     "build:release": "zig build -Doptimize=ReleaseFast",
     "build:small": "zig build -Doptimize=ReleaseSmall",
+    "test---------------------------------": "",
     "test": "zig build test",
-    "format": "zig fmt src/",
-    "check": "zig fmt src/ && zig build test",
-    "clean": "rm -rf zig-out zig-cache .zig-cache"
+    "check--------------------------------": "",
+    "util:format": "zig fmt src/",
+    "util:clean": "rm -rf zig-out zig-cache .zig-cache",
+    "util:check": "STATUS=0; bun run util:format || STATUS=1; bun run test || STATUS=1; exit $STATUS"
   },
-  "keywords": ["macos", "cleanup", "cli", "tui", "zig"],
-  "license": "MIT"
+  "devDependencies": {}
 }
