@@ -20,6 +20,9 @@ var neverDelete = []string{
 	"/private/var/vm",
 	"/private/var/db",
 	"/Applications",
+	"/Library/Keychains",
+	"/Network",
+	"/cores",
 }
 
 // neverDeletePatterns contains file patterns that should never be deleted.
@@ -33,6 +36,10 @@ var neverDeletePatterns = []string{
 	"id_ed25519*",
 	"*.p12",
 	"*.pfx",
+	"*.cer",
+	"*.crt",
+	"known_hosts",
+	"authorized_keys",
 }
 
 // protectedBundleIDs contains bundle ID prefixes that should be protected.
@@ -40,6 +47,9 @@ var protectedBundleIDs = []string{
 	"com.apple.",
 	"com.microsoft.",
 }
+
+// SizeConfirmationThreshold is the size (1GB) above which items require confirmation.
+const SizeConfirmationThreshold int64 = 1024 * 1024 * 1024
 
 // IsSafePath checks if a path is safe to delete.
 func IsSafePath(path string) bool {
@@ -107,7 +117,7 @@ func RequiresConfirmation(path string, size int64) bool {
 	}
 
 	// Large items (> 1GB)
-	if size > 1024*1024*1024 {
+	if size > SizeConfirmationThreshold {
 		return true
 	}
 
@@ -119,19 +129,25 @@ func RequiresConfirmation(path string, size int64) bool {
 	return false
 }
 
-// GetNeverDeletePaths returns the list of paths that should never be deleted.
+// GetNeverDeletePaths returns a copy of the paths that should never be deleted.
 func GetNeverDeletePaths() []string {
-	return neverDelete
+	result := make([]string, len(neverDelete))
+	copy(result, neverDelete)
+	return result
 }
 
-// GetNeverDeletePatterns returns the patterns that should never be deleted.
+// GetNeverDeletePatterns returns a copy of the patterns that should never be deleted.
 func GetNeverDeletePatterns() []string {
-	return neverDeletePatterns
+	result := make([]string, len(neverDeletePatterns))
+	copy(result, neverDeletePatterns)
+	return result
 }
 
-// GetProtectedBundleIDs returns the protected bundle ID prefixes.
+// GetProtectedBundleIDs returns a copy of the protected bundle ID prefixes.
 func GetProtectedBundleIDs() []string {
-	return protectedBundleIDs
+	result := make([]string, len(protectedBundleIDs))
+	copy(result, protectedBundleIDs)
+	return result
 }
 
 func expandPath(path string) string {

@@ -51,6 +51,7 @@ func NewBrowsersModule() (*BrowsersModule, error) {
 		filepath.Join(cacheDir, "com.microsoft.edgemac"),
 		filepath.Join(cacheDir, "org.mozilla.firefox"),
 		filepath.Join(cacheDir, "com.operasoftware.Opera"),
+		filepath.Join(cacheDir, "company.thebrowser.Browser"), // Arc browser
 	}
 
 	return m, nil
@@ -105,13 +106,14 @@ func (m *BrowsersModule) identifyBrowser(path string) string {
 	base := filepath.Base(path)
 
 	browsers := map[string]string{
-		"com.apple.Safari":        "Safari",
-		"Chrome":                  "Google Chrome",
-		"Firefox":                 "Firefox",
-		"com.brave.Browser":       "Brave",
-		"com.microsoft.edgemac":   "Microsoft Edge",
-		"org.mozilla.firefox":     "Firefox",
-		"com.operasoftware.Opera": "Opera",
+		"com.apple.Safari":           "Safari",
+		"Chrome":                     "Google Chrome",
+		"Firefox":                    "Firefox",
+		"com.brave.Browser":          "Brave",
+		"com.microsoft.edgemac":      "Microsoft Edge",
+		"org.mozilla.firefox":        "Firefox",
+		"com.operasoftware.Opera":    "Opera",
+		"company.thebrowser.Browser": "Arc",
 	}
 
 	// Check parent directory for Chrome
@@ -173,6 +175,13 @@ func GetInstalledBrowsers() []BrowserInfo {
 			BundleID: "com.microsoft.edgemac",
 			CachePaths: []string{
 				filepath.Join(cacheDir, "com.microsoft.edgemac"),
+			},
+		},
+		{
+			Name:     "Arc",
+			BundleID: "company.thebrowser.Browser",
+			CachePaths: []string{
+				filepath.Join(cacheDir, "company.thebrowser.Browser"),
 			},
 		},
 	}
