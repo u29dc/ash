@@ -2,28 +2,27 @@
 
 - **Framework**: `pkg.go.dev/github.com/charmbracelet/bubbletea`, `pkg.go.dev/github.com/charmbracelet/bubbles`, `pkg.go.dev/github.com/charmbracelet/lipgloss`
 - **Scanner**: `pkg.go.dev/github.com/charlievieth/fastwalk`
-- **DevTools**: `bun.com/docs/llms.txt`, `golangci-lint.run/docs`
+- **DevTools**: `golangci-lint.run/docs`
 
 ## 2. Repository Structure
 
 ```
 .
-├── cmd/ash/
-│   └── main.go
+├── cmd/ash/main.go        # Entry point
 ├── internal/
-│   ├── app/                # Bubble Tea application state
-│   ├── cleaner/            # Deletion orchestration
-│   │   └── modules/        # Pluggable cleanup modules
-│   ├── config/             # User configuration
-│   ├── maintenance/        # System maintenance commands
-│   ├── safety/             # Path guards and permissions
-│   ├── scanner/            # Parallel directory scanner
-│   └── tui/                # UI components and views
+│   ├── app/               # Bubble Tea application state
+│   ├── cleaner/           # Deletion orchestration
+│   │   └── modules/       # Pluggable cleanup modules
+│   ├── config/            # User configuration
+│   ├── maintenance/       # System maintenance commands
+│   ├── safety/            # Path guards and permissions
+│   ├── scanner/           # Parallel directory scanner
+│   └── tui/               # UI components and views
 │       ├── components/
 │       └── views/
-├── pkg/plist/              # macOS plist utilities
-├── tests/                  # Test suites
-├── package.json
+├── pkg/plist/             # macOS plist utilities
+├── tests/                 # Test suites
+├── package.json           # Build scripts
 ├── go.mod
 └── .golangci.yml
 ```
@@ -45,11 +44,9 @@
 - `bun run build` - Build binary to `bin/ash`
 - `bun run build:release` - Release build (CGO_ENABLED=0, trimpath)
 - `bun run test` - Run tests with race detector
-- `bun run util:check` - Format, lint, types, test (quality gate)
-- `bun run util:format` - Format code
-- `bun run util:lint` - Run golangci-lint
-- `bun run util:types` - Run go vet
-- `bun run util:clean` - Remove build artifacts
+- `bun run check` - Format, lint, types, test (quality gate)
+- `bun run format` - Format code
+- `bun run lint` - Run golangci-lint
 
 ## 5. Architecture
 
@@ -78,7 +75,7 @@
 
 ## 8. Quality
 
-- Quality gate: `bun run util:check` (format, lint, types, test)
-- golangci-lint v2 with strict rules: errcheck, govet, staticcheck, unused, exhaustive, gosec, revive, and more
+- Quality gate: `bun run check` (format, lint, types, test)
+- golangci-lint v2 with strict rules: errcheck, govet, staticcheck, unused, exhaustive, gosec, revive
 - Tests in `tests/` directory (cleaner, config, maintenance, plist, safety, scanner)
 - Commits: Conventional Commits format `type(scope): description`
