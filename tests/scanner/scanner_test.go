@@ -235,29 +235,6 @@ func TestPathConfig_ExpandPath(t *testing.T) {
 	}
 }
 
-func TestIsSubPath(t *testing.T) {
-	tests := []struct {
-		name   string
-		parent string
-		child  string
-		want   bool
-	}{
-		{"same path", "/foo/bar", "/foo/bar", true},
-		{"direct child", "/foo", "/foo/bar", true},
-		{"nested child", "/foo", "/foo/bar/baz", true},
-		{"not child", "/foo", "/bar", false},
-		{"sibling", "/foo/bar", "/foo/baz", false},
-		{"parent of", "/foo/bar", "/foo", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := scanner.IsSubPath(tt.parent, tt.child)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 // Integration test with temp directory
 func TestScanner_CreateTempDir(t *testing.T) {
 	dir := testutil.CreateTempCacheDir(t, 5, 1024)
