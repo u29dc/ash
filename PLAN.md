@@ -156,9 +156,7 @@ ash/
 │       └── main.go              # Entry point
 ├── internal/
 │   ├── app/
-│   │   ├── app.go               # Application state machine
-│   │   ├── commands.go          # Tea commands (async operations)
-│   │   └── messages.go          # Message types
+│   │   └── app.go               # Application state machine, commands, messages
 │   ├── scanner/
 │   │   ├── scanner.go           # Parallel directory scanner
 │   │   ├── paths.go             # Safe/dangerous path definitions
@@ -182,7 +180,7 @@ ash/
 │   │   ├── styles.go            # Lip Gloss style definitions
 │   │   ├── views/
 │   │   │   ├── home.go          # Main dashboard view
-│   │   │   ├── scan.go          # Scanning progress view
+│   │   │   ├── scanning.go      # Scanning progress view
 │   │   │   ├── results.go       # Results list view
 │   │   │   ├── confirm.go       # Deletion confirmation
 │   │   │   └── maintenance.go   # Maintenance commands view
@@ -194,8 +192,7 @@ ash/
 │   │       ├── keybinds.go      # Help footer
 │   │       └── toast.go         # Status messages
 │   ├── config/
-│   │   ├── config.go            # Configuration loading
-│   │   └── defaults.go          # Default settings
+│   │   └── config.go            # Configuration loading and defaults
 │   └── safety/
 │       ├── guards.go            # Never-delete patterns
 │       └── permissions.go       # TCC/FDA detection
@@ -210,21 +207,24 @@ ash/
 │   ├── cleaner/
 │   │   ├── cleaner_test.go
 │   │   └── modules/
-│   │       ├── caches_test.go
-│   │       └── xcode_test.go
+│   │       └── modules_test.go  # All module tests
+│   ├── config/
+│   │   └── config_test.go
+│   ├── maintenance/
+│   │   └── commands_test.go
+│   ├── plist/
+│   │   └── plist_test.go
 │   ├── safety/
 │   │   └── guards_test.go
 │   └── testutil/
-│       ├── fixtures.go          # Test fixtures
-│       └── mock_fs.go           # Mock filesystem
-├── scripts/
-│   └── install.sh               # Installation script
-├── .golangci.yml                # Linter configuration
-├── .goreleaser.yml              # Release configuration
-├── Makefile                     # Build commands
+│       └── fixtures.go          # Test fixtures
+├── .golangci.yml                # golangci-lint v2 configuration
+├── package.json                 # Bun scripts for build/test/lint
 ├── go.mod
 ├── go.sum
-└── README.md
+├── AGENTS.md                    # Project documentation
+├── CLAUDE.md -> AGENTS.md       # Symlink
+└── README.md -> AGENTS.md       # Symlink
 ```
 
 ### Go Equivalents of Your Standards
@@ -232,10 +232,10 @@ ash/
 | Your Standard             | Go Equivalent                                  |
 | ------------------------- | ---------------------------------------------- |
 | Zero `any` types          | Avoid `interface{}`, use generics where needed |
-| Strict mode               | `golangci-lint` with strict preset             |
-| Biome formatting          | `gofumpt` (stricter gofmt)                     |
+| Strict mode               | `golangci-lint v2` with strict preset          |
+| Biome formatting          | `go fmt` (standard formatter)                  |
 | Type checking             | Go compiler + `staticcheck`                    |
-| Pre-commit hooks          | Same husky setup, runs `make check`            |
+| Script runner             | Bun via package.json                           |
 | Domain-based organization | `internal/` packages by domain                 |
 | Comprehensive tests       | Table-driven tests + testify assertions        |
 
@@ -977,219 +977,119 @@ func TestIsProtectedApp(t *testing.T) {
 
 ## Build Configuration
 
-### Makefile
+### package.json (Bun Scripts)
 
-```makefile
-.PHONY: all build test lint fmt check clean install
-
-# Build variables
-BINARY := ash
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)"
-
-# Go tools
-GOFUMPT := gofumpt
-GOLANGCI := golangci-lint
-GOTESTSUM := gotestsum
-
-all: check build
-
-build:
-	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/ash
-
-build-release:
-	CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o bin/$(BINARY) ./cmd/ash
-
-test:
-	$(GOTESTSUM) --format=testname -- -race -coverprofile=coverage.out ./...
-
-test-short:
-	go test -short ./...
-
-lint:
-	$(GOLANGCI) run ./...
-
-fmt:
-	$(GOFUMPT) -w .
-
-# Quality gate - equivalent to your util:check
-check: fmt lint test
-	@echo "All checks passed"
-
-clean:
-	rm -rf bin/ coverage.out
-
-install: build
-	cp bin/$(BINARY) /usr/local/bin/
-
-# Development
-dev:
-	go run ./cmd/ash
-
-watch:
-	air -c .air.toml
+```json
+{
+  "name": "ash",
+  "scripts": {
+    "dev": "go run ./cmd/ash",
+    "build": "go build -ldflags \"-s -w\" -o bin/ash ./cmd/ash",
+    "build:release": "CGO_ENABLED=0 go build -ldflags \"-s -w\" -trimpath -o bin/ash ./cmd/ash",
+    "test": "go test -race ./...",
+    "test:verbose": "go test -v -race ./...",
+    "test:coverage": "go test -race -coverprofile=coverage.out ./... && go tool cover -html=coverage.out -o coverage.html",
+    "util:format": "go fmt ./...",
+    "util:lint": "golangci-lint run ./...",
+    "util:types": "go vet ./...",
+    "util:clean": "rm -rf bin/ coverage.out coverage.html",
+    "util:check": "STATUS=0; bun run util:format || STATUS=1; bun run util:lint || STATUS=1; bun run util:types || STATUS=1; bun run test || STATUS=1; exit $STATUS",
+    "deps": "go mod download && go mod tidy"
+  }
+}
 ```
 
-### golangci-lint Configuration
+### golangci-lint v2 Configuration
 
 ```yaml
 # .golangci.yml
+version: "2"
+
 run:
   timeout: 5m
   tests: true
 
 linters:
+  default: standard
   enable:
-    # Defaults
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-
-    # Strict additions (matching your TypeScript strictness)
     - bodyclose
-    - contextcheck
     - durationcheck
-    - errname
     - errorlint
     - exhaustive
-    - exportloopref
-    - forcetypeassert
     - goconst
     - gocritic
-    - gofumpt
     - gosec
-    - makezero
     - misspell
     - nakedret
-    - nilerr
-    - nilnil
-    - noctx
-    - prealloc
-    - predeclared
     - revive
-    - rowserrcheck
-    - sqlclosecheck
-    - stylecheck
-    - tenv
-    - tparallel
     - unconvert
     - unparam
     - wastedassign
+    - whitespace
+  disable:
+    - nilerr      # Many intentional nil returns in filepath.Walk callbacks
+    - prealloc    # Micro-optimization, not worth the noise
 
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
 
-  govet:
-    enable-all: true
+    govet:
+      enable:
+        - shadow
 
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-      - opinionated
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        - hugeParam  # Bubble Tea API requires value receivers
 
-  gosec:
-    excludes:
-      - G104 # Unhandled errors (we use errcheck)
+    gosec:
+      excludes:
+        - G104  # Unhandled errors (covered by errcheck)
+        - G204  # Subprocess with variable (expected for maintenance commands)
+        - G301  # Directory permissions 0755 (standard for dirs)
+        - G302  # File permissions in test utilities
+        - G304  # File inclusion via variable (expected for cleanup tool)
+        - G306  # WriteFile permissions 0644 (standard for config files)
+        - G115  # Integer conversion (handled explicitly)
 
-  revive:
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+        - name: range
+        - name: receiver-naming
+        - name: var-declaration
+        - name: var-naming
+
+    exhaustive:
+      default-signifies-exhaustive: true
+
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
     rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: increment-decrement
-      - name: indent-error-flow
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: var-declaration
-      - name: var-naming
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - goconst
-        - gosec
-```
-
-### Pre-commit Hooks
-
-```bash
-#!/bin/sh
-# .husky/pre-commit
-
-make check
-```
-
-```bash
-#!/bin/sh
-# .husky/commit-msg
-
-# Go equivalent of commitlint - using commitlint directly
-bunx --no-install commitlint --edit "$1"
-```
-
-### commitlint.config.js
-
-```javascript
-export default {
-  extends: ["@commitlint/config-conventional"],
-  rules: {
-    "type-enum": [
-      2,
-      "always",
-      [
-        "feat",
-        "fix",
-        "refactor",
-        "docs",
-        "style",
-        "chore",
-        "test",
-        "build",
-        "perf",
-      ],
-    ],
-    "type-empty": [2, "never"],
-    "scope-enum": [
-      2,
-      "always",
-      [
-        "core",
-        "scanner",
-        "cleaner",
-        "tui",
-        "safety",
-        "config",
-        "maintenance",
-        "deps",
-      ],
-    ],
-    "scope-empty": [2, "never"],
-    "subject-empty": [2, "never"],
-    "subject-case": [2, "always", "lower-case"],
-    "subject-full-stop": [2, "never", "."],
-    "header-max-length": [2, "always", 100],
-    "body-empty": [2, "never"],
-    "body-max-line-length": [2, "always", 100],
-  },
-};
+      - path: _test\.go
+        linters:
+          - goconst
+          - gosec
+          - errcheck
+      - path: tests/
+        linters:
+          - gosec
+          - errcheck
 ```
 
 ## Implementation Phases
@@ -1207,59 +1107,58 @@ Scopes: `core`, `scanner`, `cleaner`, `tui`, `safety`, `config`, `maintenance`, 
 
 Commit frequently after each logical unit of work. Small, atomic commits preferred.
 
-### Phase 1: Foundation
+### Phase 1: Foundation ✓
 
-- [ ] Initialize Go module and directory structure
-- [ ] Set up tooling (golangci-lint, gofumpt, gotestsum)
-- [ ] Create theme and styles (grayscale design system)
-- [ ] Implement basic Bubble Tea app shell
-- [ ] Set up pre-commit hooks and commitlint
+- [x] Initialize Go module and directory structure
+- [x] Set up tooling (golangci-lint v2, go fmt)
+- [x] Create theme and styles (grayscale design system)
+- [x] Implement basic Bubble Tea app shell
 
-### Phase 2: Scanner Core
+### Phase 2: Scanner Core ✓
 
-- [ ] Implement parallel directory walker using fastwalk
-- [ ] Define safe path patterns
-- [ ] Create scanner module interface
-- [ ] Implement cache module
-- [ ] Implement logs module
-- [ ] Write comprehensive scanner tests
+- [x] Implement parallel directory walker using fastwalk
+- [x] Define safe path patterns
+- [x] Create scanner module interface
+- [x] Implement cache module
+- [x] Implement logs module
+- [x] Write comprehensive scanner tests
 
-### Phase 3: TUI Views
+### Phase 3: TUI Views ✓
 
-- [ ] Home view with category selection
-- [ ] Scanning progress view with spinner
-- [ ] Results view with scrollable file list
-- [ ] Confirmation dialog
-- [ ] Keyboard navigation
+- [x] Home view with category selection
+- [x] Scanning progress view with spinner
+- [x] Results view with scrollable file list
+- [x] Confirmation dialog
+- [x] Keyboard navigation
 
-### Phase 4: Cleanup Modules
+### Phase 4: Cleanup Modules ✓
 
-- [ ] Xcode module (DerivedData, DeviceSupport, Archives)
-- [ ] Homebrew module
-- [ ] Browser caches module
-- [ ] App leftover detection (orphan finder)
-- [ ] Trash integration (move to Trash, not permanent delete)
+- [x] Xcode module (DerivedData, DeviceSupport, Archives)
+- [x] Homebrew module
+- [x] Browser caches module
+- [x] App leftover detection (orphan finder)
+- [x] Trash integration (move to Trash, not permanent delete)
 
-### Phase 5: Safety and Polish
+### Phase 5: Safety and Polish ✓
 
-- [ ] Safety guards implementation
-- [ ] Full Disk Access detection
-- [ ] Dry-run mode
-- [ ] Size formatting and sorting
-- [ ] Error handling and recovery
-- [ ] Final test coverage
+- [x] Safety guards implementation
+- [x] Full Disk Access detection
+- [x] Dry-run mode (CleanOptions.DryRun)
+- [x] Size formatting and sorting
+- [x] Error handling and recovery
+- [x] Final test coverage
 
-### Phase 6: Maintenance Commands
+### Phase 6: Maintenance Commands ✓
 
-- [ ] DNS cache flush
-- [ ] Spotlight reindex
-- [ ] Launch Services rebuild
-- [ ] Maintenance view in TUI
+- [x] DNS cache flush
+- [x] Spotlight reindex
+- [x] Launch Services rebuild
+- [x] Maintenance view in TUI
 
 ### Phase 7: Release
 
 - [ ] goreleaser configuration
-- [ ] README documentation
+- [x] README documentation (AGENTS.md)
 - [ ] Installation script
 - [ ] First release
 
@@ -1269,13 +1168,13 @@ Commit frequently after each logical unit of work. Small, atomic commits preferr
 // go.mod
 module ash
 
-go 1.24
+go 1.24.2
 
 require (
-    github.com/charmbracelet/bubbletea v1.3.4
-    github.com/charmbracelet/bubbles v0.20.0
+    github.com/charmbracelet/bubbletea v1.3.10
+    github.com/charmbracelet/bubbles v0.21.0
     github.com/charmbracelet/lipgloss v1.1.0
-    github.com/charlievieth/fastwalk v1.0.10
+    github.com/charlievieth/fastwalk v1.0.14
     github.com/dustin/go-humanize v1.0.1
     github.com/stretchr/testify v1.10.0
     howett.net/plist v1.0.1
@@ -1295,10 +1194,10 @@ require (
 
 Mirrors your TypeScript approach:
 
-1. Zero linter warnings (`golangci-lint run`)
-2. Zero vet issues (`go vet ./...`)
-3. All tests passing (`go test ./...`)
-4. Race detector clean (`go test -race ./...`)
-5. Successful build (`go build ./...`)
+1. Zero linter warnings (`bun run util:lint`)
+2. Zero vet issues (`bun run util:types`)
+3. All tests passing with race detector (`bun run test`)
+4. Code formatted (`bun run util:format`)
+5. Successful build (`bun run build`)
 
-All enforced via `make check` in pre-commit hook.
+All enforced via `bun run util:check`.
