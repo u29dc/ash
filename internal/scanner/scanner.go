@@ -50,15 +50,17 @@ func (r RiskLevel) String() string {
 
 // Entry represents a single file or directory that can be cleaned.
 type Entry struct {
-	Path     string
-	Name     string
-	Size     int64
-	ModTime  time.Time
-	Category Category
-	Risk     RiskLevel
-	Selected bool
-	BundleID string // For app-related entries
-	IsDir    bool
+	Path          string
+	Name          string
+	Size          int64
+	ModTime       time.Time
+	Category      Category
+	Risk          RiskLevel
+	Selected      bool
+	BundleID      string // For app-related entries
+	IsDir         bool
+	IsSymlink     bool
+	SymlinkTarget string
 }
 
 // ScanResult contains the results of a scan operation.

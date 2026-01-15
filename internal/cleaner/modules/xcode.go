@@ -79,8 +79,14 @@ func (m *XcodeModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 				continue
 			}
 
+			isSymlink := info.Mode()&os.ModeSymlink != 0
+			var symlinkTarget string
+			if isSymlink {
+				symlinkTarget, _ = os.Readlink(path)
+			}
+
 			size := info.Size()
-			if item.IsDir() {
+			if item.IsDir() && !isSymlink {
 				size = calcDirSize(path)
 			}
 
@@ -88,13 +94,15 @@ func (m *XcodeModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 			risk := m.assessRisk(basePath)
 
 			entries = append(entries, scanner.Entry{
-				Path:     path,
-				Name:     item.Name(),
-				Size:     size,
-				ModTime:  info.ModTime(),
-				Category: scanner.CategoryXcode,
-				Risk:     risk,
-				IsDir:    item.IsDir(),
+				Path:          path,
+				Name:          item.Name(),
+				Size:          size,
+				ModTime:       info.ModTime(),
+				Category:      scanner.CategoryXcode,
+				Risk:          risk,
+				IsDir:         item.IsDir(),
+				IsSymlink:     isSymlink,
+				SymlinkTarget: symlinkTarget,
 			})
 		}
 	}

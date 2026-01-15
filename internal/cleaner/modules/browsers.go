@@ -62,7 +62,7 @@ func (m *BrowsersModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 	var entries []scanner.Entry
 
 	for _, basePath := range m.paths {
-		info, err := os.Stat(basePath)
+		info, err := os.Lstat(basePath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -81,21 +81,29 @@ func (m *BrowsersModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 			continue
 		}
 
+		isSymlink := info.Mode()&os.ModeSymlink != 0
+		var symlinkTarget string
+		if isSymlink {
+			symlinkTarget, _ = os.Readlink(basePath)
+		}
+
 		size := info.Size()
-		if info.IsDir() {
+		if info.IsDir() && !isSymlink {
 			size = calcDirSize(basePath)
 		}
 
 		browserName := m.identifyBrowser(basePath)
 
 		entries = append(entries, scanner.Entry{
-			Path:     basePath,
-			Name:     browserName,
-			Size:     size,
-			ModTime:  info.ModTime(),
-			Category: scanner.CategoryBrowsers,
-			Risk:     scanner.RiskSafe,
-			IsDir:    info.IsDir(),
+			Path:          basePath,
+			Name:          browserName,
+			Size:          size,
+			ModTime:       info.ModTime(),
+			Category:      scanner.CategoryBrowsers,
+			Risk:          scanner.RiskSafe,
+			IsDir:         info.IsDir(),
+			IsSymlink:     isSymlink,
+			SymlinkTarget: symlinkTarget,
 		})
 	}
 

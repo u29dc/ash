@@ -95,19 +95,27 @@ func (m *CachesModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 				continue
 			}
 
+			isSymlink := info.Mode()&os.ModeSymlink != 0
+			var symlinkTarget string
+			if isSymlink {
+				symlinkTarget, _ = os.Readlink(path)
+			}
+
 			size := info.Size()
-			if item.IsDir() {
+			if item.IsDir() && !isSymlink {
 				size = calcDirSize(path)
 			}
 
 			entries = append(entries, scanner.Entry{
-				Path:     path,
-				Name:     item.Name(),
-				Size:     size,
-				ModTime:  info.ModTime(),
-				Category: scanner.CategoryCaches,
-				Risk:     scanner.RiskSafe,
-				IsDir:    item.IsDir(),
+				Path:          path,
+				Name:          item.Name(),
+				Size:          size,
+				ModTime:       info.ModTime(),
+				Category:      scanner.CategoryCaches,
+				Risk:          scanner.RiskSafe,
+				IsDir:         item.IsDir(),
+				IsSymlink:     isSymlink,
+				SymlinkTarget: symlinkTarget,
 			})
 		}
 	}
