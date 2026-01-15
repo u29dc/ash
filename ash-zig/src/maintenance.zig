@@ -90,15 +90,15 @@ pub fn run(allocator: std.mem.Allocator, cmd: *const Command) !CommandResult {
     };
 
     // Build argv
-    var argv = std.ArrayList([]const u8).init(allocator);
-    defer argv.deinit();
+    var argv = std.ArrayList([]const u8){};
+    defer argv.deinit(allocator);
 
     if (cmd.requires_sudo) {
-        try argv.append("sudo");
+        try argv.append(allocator, "sudo");
     }
-    try argv.append(cmd.cmd);
+    try argv.append(allocator, cmd.cmd);
     for (cmd.args) |arg| {
-        try argv.append(arg);
+        try argv.append(allocator, arg);
     }
 
     // Execute
@@ -142,13 +142,13 @@ pub fn run(allocator: std.mem.Allocator, cmd: *const Command) !CommandResult {
 
 /// Run all useful commands
 pub fn runAll(allocator: std.mem.Allocator, useful_only: bool) !std.ArrayList(CommandResult) {
-    var results = std.ArrayList(CommandResult).init(allocator);
-    errdefer results.deinit();
+    var results = std.ArrayList(CommandResult){};
+    errdefer results.deinit(allocator);
 
     for (&commands) |*cmd| {
         if (useful_only and !cmd.useful) continue;
         const result = try run(allocator, cmd);
-        try results.append(result);
+        try results.append(allocator, result);
     }
 
     return results;

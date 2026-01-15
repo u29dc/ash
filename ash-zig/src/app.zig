@@ -96,8 +96,11 @@ pub const App = struct {
     pub fn run(self: *App) !void {
         // Check platform
         if (!utils.isMacOS()) {
-            const stderr = std.io.getStdErr().writer();
+            var err_buf: [256]u8 = undefined;
+            var stderr_writer = std.fs.File.stderr().writer(&err_buf);
+            const stderr = &stderr_writer.interface;
             try stderr.writeAll("ash only runs on macOS\n");
+            try stderr.flush();
             return;
         }
 
@@ -105,7 +108,9 @@ pub const App = struct {
         self.term_state = try terminal.enableRawMode();
         errdefer if (self.term_state) |ts| terminal.disableRawMode(ts);
 
-        const stdout = std.io.getStdOut().writer();
+        var stdout_buf: [8192]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+        const stdout = &stdout_writer.interface;
 
         // Enter alternate screen
         try terminal.enterAltScreen(stdout);
@@ -123,6 +128,7 @@ pub const App = struct {
             // Render if needed
             if (self.needs_render) {
                 try self.render(stdout);
+                try stdout.flush();
                 self.needs_render = false;
             }
 
@@ -341,11 +347,14 @@ pub const App = struct {
             self.scan.setProgress(@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(categories.len)));
 
             // Render progress
-            const stdout = std.io.getStdOut().writer();
-            try self.render(stdout);
+            var scan_stdout_buf: [8192]u8 = undefined;
+            var scan_stdout_writer = std.fs.File.stdout().writer(&scan_stdout_buf);
+            const scan_stdout = &scan_stdout_writer.interface;
+            try self.render(scan_stdout);
+            try scan_stdout.flush();
 
-            const entries = cat.scanFn(self.allocator) catch continue;
-            defer entries.deinit();
+            var entries = cat.scanFn(self.allocator) catch continue;
+            defer entries.deinit(self.allocator);
 
             for (entries.items) |*entry| {
                 try result.addEntry(entry);
@@ -388,9 +397,12 @@ pub const App = struct {
         self.cleaning.setStats(stats);
 
         // Show completion
-        const stdout = std.io.getStdOut().writer();
-        try terminal.clearScreen(stdout);
-        try self.cleaning.renderComplete(stdout, self.width, self.height);
+        var clean_stdout_buf: [8192]u8 = undefined;
+        var clean_stdout_writer = std.fs.File.stdout().writer(&clean_stdout_buf);
+        const clean_stdout = &clean_stdout_writer.interface;
+        try terminal.clearScreen(clean_stdout);
+        try self.cleaning.renderComplete(clean_stdout, self.width, self.height);
+        try clean_stdout.flush();
 
         // Wait for key
         while (true) {
@@ -410,8 +422,11 @@ pub const App = struct {
         self.needs_render = true;
 
         // Render running state
-        const stdout = std.io.getStdOut().writer();
-        try self.render(stdout);
+        var maint_stdout_buf: [8192]u8 = undefined;
+        var maint_stdout_writer = std.fs.File.stdout().writer(&maint_stdout_buf);
+        const maint_stdout = &maint_stdout_writer.interface;
+        try self.render(maint_stdout);
+        try maint_stdout.flush();
 
         // Run command
         const result = maintenance.run(self.allocator, cmd) catch |err| {

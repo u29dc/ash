@@ -117,15 +117,15 @@ pub fn fdaInstructions() []const u8 {
 
 /// Filter paths to only those accessible
 pub fn getAccessiblePaths(allocator: std.mem.Allocator, paths: []const []const u8) !std.ArrayList([]const u8) {
-    var accessible = std.ArrayList([]const u8).init(allocator);
-    errdefer accessible.deinit();
+    var accessible = std.ArrayList([]const u8){};
+    errdefer accessible.deinit(allocator);
 
     for (paths) |path| {
         const expanded = utils.expandPath(allocator, path) catch continue;
         defer allocator.free(expanded);
 
         if (canAccessPath(expanded)) {
-            try accessible.append(try allocator.dupe(u8, path));
+            try accessible.append(allocator, try allocator.dupe(u8, path));
         }
     }
 

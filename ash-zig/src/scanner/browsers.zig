@@ -68,8 +68,8 @@ pub const known_browsers = [_]Browser{
 
 /// Scan browser cache directories
 pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
-    var entries = std.ArrayList(scanner.Entry).init(allocator);
-    errdefer entries.deinit();
+    var entries = std.ArrayList(scanner.Entry){};
+    errdefer entries.deinit(allocator);
 
     for (known_browsers) |browser| {
         // Check if browser is installed
@@ -96,7 +96,7 @@ pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
             // Skip empty caches
             if (entry.size == 0) continue;
 
-            try entries.append(entry);
+            try entries.append(allocator, entry);
             break; // Only add one entry per browser
         }
     }

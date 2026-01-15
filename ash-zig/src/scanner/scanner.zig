@@ -139,30 +139,30 @@ pub const ScanResult = struct {
 
     pub fn init(allocator: std.mem.Allocator) ScanResult {
         return .{
-            .entries = std.ArrayList(Entry).init(allocator),
+            .entries = .{},
             .total_size = 0,
             .total_count = 0,
             .duration_ns = 0,
-            .errors = std.ArrayList(ScanError).init(allocator),
+            .errors = .{},
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *ScanResult) void {
-        self.entries.deinit();
-        self.errors.deinit();
+        self.entries.deinit(self.allocator);
+        self.errors.deinit(self.allocator);
     }
 
     /// Add an entry to the result (accepts pointer to avoid large struct copy on call site)
     pub fn addEntry(self: *ScanResult, entry: *const Entry) !void {
-        try self.entries.append(entry.*);
+        try self.entries.append(self.allocator, entry.*);
         self.total_size += entry.size;
         self.total_count += 1;
     }
 
     /// Add an error to the result (accepts pointer to avoid large struct copy on call site)
     pub fn addError(self: *ScanResult, err: *const ScanError) !void {
-        try self.errors.append(err.*);
+        try self.errors.append(self.allocator, err.*);
     }
 
     pub fn sortBySize(self: *ScanResult) void {
@@ -229,8 +229,8 @@ pub fn scanDirectory(
     category: Category,
     risk: RiskLevel,
 ) !std.ArrayList(Entry) {
-    var entries = std.ArrayList(Entry).init(allocator);
-    errdefer entries.deinit();
+    var entries = std.ArrayList(Entry){};
+    errdefer entries.deinit(allocator);
 
     const expanded = try utils.expandPath(allocator, base_path);
     defer allocator.free(expanded);
@@ -276,7 +276,7 @@ pub fn scanDirectory(
             entry.risk = .dangerous;
         }
 
-        try entries.append(entry);
+        try entries.append(allocator, entry);
     }
 
     return entries;
@@ -455,8 +455,8 @@ test "scanDirectory - nonexistent directory" {
     const allocator = std.testing.allocator;
 
     // Scanning a nonexistent directory should return empty list (not error)
-    const entries = try scanDirectory(allocator, "/nonexistent/path/12345", .caches, .safe);
-    defer entries.deinit();
+    var entries = try scanDirectory(allocator, "/nonexistent/path/12345", .caches, .safe);
+    defer entries.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 0), entries.items.len);
 }

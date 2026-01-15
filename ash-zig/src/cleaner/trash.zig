@@ -29,14 +29,14 @@ pub fn moveToTrash(allocator: std.mem.Allocator, path: []const u8) !void {
 /// Move to Trash using AppleScript (preserves "Put Back" functionality)
 fn moveToTrashAppleScript(allocator: std.mem.Allocator, path: []const u8) !void {
     // Escape path for AppleScript
-    var escaped_path = std.ArrayList(u8).init(allocator);
-    defer escaped_path.deinit();
+    var escaped_path = std.ArrayList(u8){};
+    defer escaped_path.deinit(allocator);
 
     for (path) |c| {
         if (c == '"' or c == '\\') {
-            try escaped_path.append('\\');
+            try escaped_path.append(allocator, '\\');
         }
-        try escaped_path.append(c);
+        try escaped_path.append(allocator, c);
     }
 
     const script = try std.fmt.allocPrint(

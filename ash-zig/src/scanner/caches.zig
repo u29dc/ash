@@ -4,8 +4,8 @@ const utils = @import("../utils.zig");
 
 /// Scan user cache directories
 pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
-    var entries = std.ArrayList(scanner.Entry).init(allocator);
-    errdefer entries.deinit();
+    var entries = std.ArrayList(scanner.Entry){};
+    errdefer entries.deinit(allocator);
 
     const cache_path = "~/Library/Caches";
     const expanded = try utils.expandPath(allocator, cache_path);
@@ -63,7 +63,7 @@ pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
             entry.setBundleId(item.name);
         }
 
-        try entries.append(entry);
+        try entries.append(allocator, entry);
     }
 
     return entries;

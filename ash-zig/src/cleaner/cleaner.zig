@@ -48,20 +48,22 @@ pub const CleanStats = struct {
     total_size: u64 = 0,
     cleaned_size: u64 = 0,
     duration_ns: u64 = 0,
-    results: std.ArrayList(CleanResult),
+    results: std.ArrayList(CleanResult) = .{},
+    allocator: std.mem.Allocator = undefined,
 
     pub fn init(allocator: std.mem.Allocator) CleanStats {
         return .{
-            .results = std.ArrayList(CleanResult).init(allocator),
+            .results = .{},
+            .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *CleanStats) void {
-        self.results.deinit();
+        self.results.deinit(self.allocator);
     }
 
     pub fn addResult(self: *CleanStats, result: CleanResult) !void {
-        try self.results.append(result);
+        try self.results.append(self.allocator, result);
         self.total_count += 1;
         self.total_size += result.size;
 

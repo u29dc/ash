@@ -11,8 +11,8 @@ const log_patterns = [_][]const u8{
 
 /// Scan user log directories
 pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
-    var entries = std.ArrayList(scanner.Entry).init(allocator);
-    errdefer entries.deinit();
+    var entries = std.ArrayList(scanner.Entry){};
+    errdefer entries.deinit(allocator);
 
     const log_paths = [_][]const u8{
         "~/Library/Logs",
@@ -56,7 +56,7 @@ pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
             // Skip empty entries
             if (entry.size == 0) continue;
 
-            try entries.append(entry);
+            try entries.append(allocator, entry);
         }
     }
 

@@ -54,18 +54,18 @@ var cache_allocator: ?std.mem.Allocator = null;
 pub fn initBlockedPathsCache(allocator: std.mem.Allocator) !void {
     if (cached_blocked_paths != null) return; // Already initialized
 
-    var paths = std.ArrayList([]const u8).init(allocator);
+    var paths = std.ArrayList([]const u8){};
     errdefer {
         for (paths.items) |p| allocator.free(p);
-        paths.deinit();
+        paths.deinit(allocator);
     }
 
     for (never_delete_raw) |blocked| {
         const expanded = utils.expandPath(allocator, blocked) catch continue;
-        try paths.append(expanded);
+        try paths.append(allocator, expanded);
     }
 
-    cached_blocked_paths = try paths.toOwnedSlice();
+    cached_blocked_paths = try paths.toOwnedSlice(allocator);
     cache_allocator = allocator;
 }
 
@@ -190,33 +190,33 @@ pub fn requiresConfirmation(allocator: std.mem.Allocator, path: []const u8, size
 pub fn validatePaths(
     allocator: std.mem.Allocator,
     paths: []const []const u8,
-) !struct { safe: std.ArrayList([]const u8), blocked: std.ArrayList([]const u8) } {
-    var safe = std.ArrayList([]const u8).init(allocator);
-    var blocked = std.ArrayList([]const u8).init(allocator);
+) !struct { safe: std.ArrayList([]const u8), blocked: std.ArrayList([]const u8), allocator: std.mem.Allocator } {
+    var safe = std.ArrayList([]const u8){};
+    var blocked = std.ArrayList([]const u8){};
 
     for (paths) |path| {
         if (isSafePath(allocator, path)) {
-            try safe.append(path);
+            try safe.append(allocator, path);
         } else {
-            try blocked.append(path);
+            try blocked.append(allocator, path);
         }
     }
 
-    return .{ .safe = safe, .blocked = blocked };
+    return .{ .safe = safe, .blocked = blocked, .allocator = allocator };
 }
 
 /// Sanitize a path by removing dangerous characters
 pub fn sanitizePath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
+    var result = std.ArrayList(u8){};
+    errdefer result.deinit(allocator);
 
     for (path) |c| {
         // Skip null bytes and other control characters
         if (c == 0 or (c < 32 and c != '\t')) continue;
-        try result.append(c);
+        try result.append(allocator, c);
     }
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 // Tests
@@ -325,9 +325,9 @@ test "validatePaths" {
         "/tmp/safe3",
     };
 
-    const result = try validatePaths(allocator, &paths);
-    defer result.safe.deinit();
-    defer result.blocked.deinit();
+    var result = try validatePaths(allocator, &paths);
+    defer result.safe.deinit(result.allocator);
+    defer result.blocked.deinit(result.allocator);
 
     // Should have 3 safe paths
     try std.testing.expectEqual(@as(usize, 3), result.safe.items.len);

@@ -54,7 +54,7 @@ pub const Key = union(enum) {
 
 /// Get terminal size using ioctl
 pub fn getSize() !struct { width: u16, height: u16 } {
-    const stdout = std.io.getStdOut();
+    const stdout = std.fs.File.stdout();
     var ws: std.posix.winsize = undefined;
 
     const result = std.posix.system.ioctl(stdout.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&ws));
@@ -69,14 +69,14 @@ pub fn getSize() !struct { width: u16, height: u16 } {
     }
 
     return .{
-        .width = ws.ws_col,
-        .height = ws.ws_row,
+        .width = ws.col,
+        .height = ws.row,
     };
 }
 
 /// Enable raw mode for direct input
 pub fn enableRawMode() !TermState {
-    const stdin = std.io.getStdIn();
+    const stdin = std.fs.File.stdin();
 
     // Check if stdin is a TTY
     if (!std.posix.isatty(stdin.handle)) {
@@ -122,7 +122,7 @@ pub fn enableRawMode() !TermState {
 
 /// Restore terminal to original state
 pub fn disableRawMode(state: TermState) void {
-    const stdin = std.io.getStdIn();
+    const stdin = std.fs.File.stdin();
     std.posix.tcsetattr(stdin.handle, .FLUSH, state.original_termios) catch {};
 }
 
@@ -148,7 +148,7 @@ pub fn clearScreen(writer: anytype) !void {
 
 /// Read a single key event (non-blocking)
 pub fn readKey() ?Event {
-    const stdin = std.io.getStdIn();
+    const stdin = std.fs.File.stdin();
     var buf: [16]u8 = undefined;
 
     const bytes_read = stdin.read(&buf) catch return null;
@@ -234,7 +234,7 @@ fn parseCSI(bytes: []const u8) Event {
 
 /// Poll for input with timeout (milliseconds)
 pub fn pollInput(timeout_ms: i32) bool {
-    const stdin = std.io.getStdIn();
+    const stdin = std.fs.File.stdin();
     var fds = [_]std.posix.pollfd{.{
         .fd = stdin.handle,
         .events = std.posix.POLL.IN,
@@ -243,12 +243,6 @@ pub fn pollInput(timeout_ms: i32) bool {
 
     const result = std.posix.poll(&fds, timeout_ms) catch return false;
     return result > 0 and (fds[0].revents & std.posix.POLL.IN) != 0;
-}
-
-/// Flush stdout
-pub fn flush() void {
-    const stdout = std.io.getStdOut();
-    stdout.flush() catch {};
 }
 
 // Tests

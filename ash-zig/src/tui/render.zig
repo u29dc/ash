@@ -13,7 +13,7 @@ pub const Screen = struct {
     pub fn init(allocator: std.mem.Allocator, width: u16, height: u16) Screen {
         return .{
             .allocator = allocator,
-            .buffer = std.ArrayList(u8).init(allocator),
+            .buffer = .{},
             .width = width,
             .height = height,
             .style = theme.Style.init(theme.default_theme),
@@ -21,7 +21,7 @@ pub const Screen = struct {
     }
 
     pub fn deinit(self: *Screen) void {
-        self.buffer.deinit();
+        self.buffer.deinit(self.allocator);
     }
 
     pub fn writer(self: *Screen) std.ArrayList(u8).Writer {
@@ -151,7 +151,7 @@ pub const Screen = struct {
 
     /// Flush buffer to stdout
     pub fn flush(self: *Screen) !void {
-        const stdout = std.io.getStdOut();
+        const stdout = std.fs.File.stdout();
         try stdout.writeAll(self.buffer.items);
         self.clear();
     }

@@ -30,8 +30,11 @@ pub fn main() !void {
 
     // Check platform
     if (!utils.isMacOS()) {
-        const stderr = std.io.getStdErr().writer();
+        var err_buf: [256]u8 = undefined;
+        var stderr_writer = std.fs.File.stderr().writer(&err_buf);
+        const stderr = &stderr_writer.interface;
         try stderr.writeAll("Error: ash only runs on macOS\n");
+        try stderr.flush();
         std.process.exit(1);
     }
 
@@ -40,21 +43,29 @@ pub fn main() !void {
     defer app.deinit();
 
     app.run() catch |err| {
-        const stderr = std.io.getStdErr().writer();
-        try stderr.print("Error: {s}\n", .{@errorName(err)});
+        var err_buf: [256]u8 = undefined;
+        var stderr_writer = std.fs.File.stderr().writer(&err_buf);
+        const stderr = &stderr_writer.interface;
+        stderr.print("Error: {s}\n", .{@errorName(err)}) catch {};
+        stderr.flush() catch {};
         std.process.exit(1);
     };
 }
 
 fn printVersion() !void {
-    const stdout = std.io.getStdOut().writer();
+    var buf: [256]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    const stdout = &stdout_writer.interface;
     try stdout.print("ash version {s}\n", .{version});
     try stdout.print("commit: {s}\n", .{commit});
     try stdout.print("built: {s}\n", .{build_time});
+    try stdout.flush();
 }
 
 fn printHelp() !void {
-    const stdout = std.io.getStdOut().writer();
+    var buf: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    const stdout = &stdout_writer.interface;
     try stdout.writeAll(
         \\ash - macOS cleanup utility
         \\
@@ -75,6 +86,7 @@ fn printHelp() !void {
         \\For more information, visit: https://github.com/iinfin/ash
         \\
     );
+    try stdout.flush();
 }
 
 // Import all modules for testing

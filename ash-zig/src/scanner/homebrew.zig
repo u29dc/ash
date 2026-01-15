@@ -11,8 +11,8 @@ const homebrew_paths = [_][]const u8{
 
 /// Scan Homebrew cache directories
 pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
-    var entries = std.ArrayList(scanner.Entry).init(allocator);
-    errdefer entries.deinit();
+    var entries = std.ArrayList(scanner.Entry){};
+    errdefer entries.deinit(allocator);
 
     for (homebrew_paths) |brew_path| {
         const expanded = utils.expandPath(allocator, brew_path) catch continue;
@@ -52,7 +52,7 @@ pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
             // Skip empty entries
             if (entry.size == 0) continue;
 
-            try entries.append(entry);
+            try entries.append(allocator, entry);
         }
     }
 

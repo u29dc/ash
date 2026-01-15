@@ -33,8 +33,8 @@ pub const Leftover = struct {
 
 /// Scan for orphaned app leftovers
 pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
-    var entries = std.ArrayList(scanner.Entry).init(allocator);
-    errdefer entries.deinit();
+    var entries = std.ArrayList(scanner.Entry){};
+    errdefer entries.deinit(allocator);
 
     // Get list of installed apps
     var installed = std.StringHashMap(void).init(allocator);
@@ -98,7 +98,7 @@ pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
             // Skip small entries
             if (entry.size < 1024) continue;
 
-            try entries.append(entry);
+            try entries.append(allocator, entry);
         }
     }
 

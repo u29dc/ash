@@ -32,8 +32,8 @@ const xcode_paths = [_]struct {
 
 /// Scan Xcode-related directories
 pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
-    var entries = std.ArrayList(scanner.Entry).init(allocator);
-    errdefer entries.deinit();
+    var entries = std.ArrayList(scanner.Entry){};
+    errdefer entries.deinit(allocator);
 
     for (xcode_paths) |xcode_path| {
         const expanded = try utils.expandPath(allocator, xcode_path.path);
@@ -76,7 +76,7 @@ pub fn scan(allocator: std.mem.Allocator) !std.ArrayList(scanner.Entry) {
             // Skip empty entries
             if (entry.size == 0) continue;
 
-            try entries.append(entry);
+            try entries.append(allocator, entry);
         }
     }
 
