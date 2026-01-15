@@ -99,7 +99,7 @@ pub fn renderFooter(writer: anytype, bindings: []const KeyBind, width: u16, styl
     try writer.writeAll("\n");
 
     // Draw bindings
-    const kb = KeyBinds.init(bindings);
+    var kb = KeyBinds.init(bindings);
     kb.style = style;
     try kb.renderCompact(writer);
     try writer.writeAll("\n");

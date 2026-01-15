@@ -153,14 +153,16 @@ pub const ScanResult = struct {
         self.errors.deinit();
     }
 
-    pub fn addEntry(self: *ScanResult, entry: Entry) !void {
-        try self.entries.append(entry);
+    /// Add an entry to the result (accepts pointer to avoid large struct copy on call site)
+    pub fn addEntry(self: *ScanResult, entry: *const Entry) !void {
+        try self.entries.append(entry.*);
         self.total_size += entry.size;
         self.total_count += 1;
     }
 
-    pub fn addError(self: *ScanResult, err: ScanError) !void {
-        try self.errors.append(err);
+    /// Add an error to the result (accepts pointer to avoid large struct copy on call site)
+    pub fn addError(self: *ScanResult, err: *const ScanError) !void {
+        try self.errors.append(err.*);
     }
 
     pub fn sortBySize(self: *ScanResult) void {
@@ -181,7 +183,7 @@ pub const ScanResult = struct {
 
     pub fn selectedSize(self: *const ScanResult) u64 {
         var total: u64 = 0;
-        for (self.entries.items) |entry| {
+        for (self.entries.items) |*entry| {
             if (entry.selected) total += entry.size;
         }
         return total;
@@ -189,7 +191,7 @@ pub const ScanResult = struct {
 
     pub fn selectedCount(self: *const ScanResult) usize {
         var count: usize = 0;
-        for (self.entries.items) |entry| {
+        for (self.entries.items) |*entry| {
             if (entry.selected) count += 1;
         }
         return count;
@@ -280,6 +282,11 @@ pub fn scanDirectory(
     return entries;
 }
 
+/// Add entry to result by value (convenience for local Entry variables)
+pub fn addEntryByValue(result: *ScanResult, entry: Entry) !void {
+    try result.addEntry(&entry);
+}
+
 // Tests
 test "Entry basic operations" {
     var entry = Entry{};
@@ -307,8 +314,8 @@ test "ScanResult operations" {
     entry2.setName("b");
     entry2.size = 2000;
 
-    try result.addEntry(entry1);
-    try result.addEntry(entry2);
+    try result.addEntry(&entry1);
+    try result.addEntry(&entry2);
 
     try std.testing.expectEqual(@as(usize, 2), result.total_count);
     try std.testing.expectEqual(@as(u64, 3000), result.total_size);

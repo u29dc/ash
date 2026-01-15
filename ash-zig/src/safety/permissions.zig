@@ -100,18 +100,18 @@ pub fn requiresSudo(allocator: std.mem.Allocator, path: []const u8) bool {
 
 /// Get instructions for enabling Full Disk Access
 pub fn fdaInstructions() []const u8 {
-    return
-        \\Full Disk Access Required
-        \\
-        \\To scan all caches and logs, ash needs Full Disk Access:
-        \\
-        \\1. Open System Preferences > Security & Privacy > Privacy
-        \\2. Select "Full Disk Access" from the left sidebar
-        \\3. Click the lock icon to make changes
-        \\4. Click + and add your terminal app (Terminal, iTerm2, etc.)
-        \\5. Restart your terminal
-        \\
-        \\Without FDA, some protected directories will be skipped.
+    return 
+    \\Full Disk Access Required
+    \\
+    \\To scan all caches and logs, ash needs Full Disk Access:
+    \\
+    \\1. Open System Preferences > Security & Privacy > Privacy
+    \\2. Select "Full Disk Access" from the left sidebar
+    \\3. Click the lock icon to make changes
+    \\4. Click + and add your terminal app (Terminal, iTerm2, etc.)
+    \\5. Restart your terminal
+    \\
+    \\Without FDA, some protected directories will be skipped.
     ;
 }
 
