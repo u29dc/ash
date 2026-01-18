@@ -8,6 +8,7 @@ import (
 
 	"ash/internal/safety"
 	"ash/internal/scanner"
+	plistutil "ash/pkg/plist"
 )
 
 // AppsModule handles app leftover cleanup.
@@ -140,22 +141,24 @@ func (m *AppsModule) getInstalledAppBundleIDs() map[string]bool {
 	}
 
 	for _, appDir := range appDirs {
-		entries, err := os.ReadDir(appDir)
-		if err != nil {
-			continue
-		}
-
-		for _, entry := range entries {
+		_ = filepath.WalkDir(appDir, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if !entry.IsDir() {
+				return nil
+			}
 			if !strings.HasSuffix(entry.Name(), ".app") {
-				continue
+				return nil
 			}
 
-			appPath := filepath.Join(appDir, entry.Name())
-			bundleID := m.getBundleID(appPath)
+			bundleID := m.getBundleID(path)
 			if bundleID != "" {
 				installed[bundleID] = true
 			}
-		}
+
+			return filepath.SkipDir
+		})
 	}
 
 	return installed
@@ -163,32 +166,11 @@ func (m *AppsModule) getInstalledAppBundleIDs() map[string]bool {
 
 func (m *AppsModule) getBundleID(appPath string) string {
 	plistPath := filepath.Join(appPath, "Contents", "Info.plist")
-	data, err := os.ReadFile(plistPath)
+	bundleID, err := plistutil.GetBundleID(plistPath)
 	if err != nil {
 		return ""
 	}
-
-	// Simple extraction - look for CFBundleIdentifier
-	content := string(data)
-	key := "<key>CFBundleIdentifier</key>"
-	idx := strings.Index(content, key)
-	if idx == -1 {
-		return ""
-	}
-
-	// Find the string value after the key
-	rest := content[idx+len(key):]
-	start := strings.Index(rest, "<string>")
-	if start == -1 {
-		return ""
-	}
-	rest = rest[start+8:]
-	end := strings.Index(rest, "</string>")
-	if end == -1 {
-		return ""
-	}
-
-	return rest[:end]
+	return bundleID
 }
 
 func (m *AppsModule) extractBundleID(name string) string {

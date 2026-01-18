@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os/exec"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,14 +41,19 @@ func StartScan(ctx context.Context, categories []scanner.Category) tea.Cmd {
 }
 
 // StartModuleScan returns a command that scans using cleanup modules.
-func StartModuleScan(ctx context.Context) tea.Cmd {
+func StartModuleScan(ctx context.Context, includeAppData bool) tea.Cmd {
 	return func() tea.Msg {
 		registry, err := modules.NewRegistry()
 		if err != nil {
 			return ScanErrorMsg{Err: err}
 		}
 
-		registry.EnableAll()
+		for _, mod := range registry.Modules() {
+			if mod.Category() != scanner.CategoryAppData {
+				continue
+			}
+			mod.SetEnabled(includeAppData)
+		}
 
 		var allEntries []scanner.Entry
 		var totalSize int64
@@ -58,9 +64,9 @@ func StartModuleScan(ctx context.Context) tea.Cmd {
 				continue
 			}
 
-			for _, entry := range entries {
-				allEntries = append(allEntries, entry)
-				totalSize += entry.Size
+			for i := range entries {
+				allEntries = append(allEntries, entries[i])
+				totalSize += entries[i].Size
 			}
 		}
 
@@ -86,6 +92,17 @@ func StartClean(ctx context.Context, entries []scanner.Entry, dryRun bool) tea.C
 
 		return CleanCompleteMsg{Stats: stats}
 	}
+}
+
+// RequestAuth requests authorization once for privileged operations.
+func RequestAuth(ctx context.Context) tea.Cmd {
+	cmd := exec.CommandContext(ctx, "sudo", "-v")
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return AuthErrorMsg{Err: err}
+		}
+		return AuthSuccessMsg{}
+	})
 }
 
 // RunMaintenanceCommand returns a command that runs a maintenance operation.

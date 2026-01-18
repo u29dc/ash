@@ -78,7 +78,16 @@ func (m *CachesModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 			}
 
 			// Skip browser caches (handled by browsers module)
-			browserPrefixes := []string{"com.apple.Safari", "Google", "Firefox", "com.brave.Browser"}
+			browserPrefixes := []string{
+				"com.apple.Safari",
+				"Google",
+				"Firefox",
+				"org.mozilla.firefox",
+				"com.brave.Browser",
+				"com.microsoft.edgemac",
+				"com.operasoftware.Opera",
+				"company.thebrowser.Browser",
+			}
 			skip := false
 			for _, prefix := range browserPrefixes {
 				if item.Name() == prefix || strings.HasPrefix(item.Name(), prefix) {

@@ -28,14 +28,19 @@ func TestNewRegistry(t *testing.T) {
 	assert.Contains(t, names, "Xcode")
 	assert.Contains(t, names, "Homebrew")
 	assert.Contains(t, names, "Browsers")
+	assert.Contains(t, names, "App Leftovers")
 }
 
 func TestRegistry_EnableDisable(t *testing.T) {
 	registry, err := modules.NewRegistry()
 	require.NoError(t, err)
 
-	// All should be enabled by default
+	// All should be enabled by default except App Leftovers
 	for _, m := range registry.Modules() {
+		if m.Name() == "App Leftovers" {
+			assert.False(t, m.IsEnabled(), "Module %s should be disabled by default", m.Name())
+			continue
+		}
 		assert.True(t, m.IsEnabled(), "Module %s should be enabled by default", m.Name())
 	}
 

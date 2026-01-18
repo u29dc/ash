@@ -51,6 +51,14 @@ type CleanErrorMsg struct {
 	Err error
 }
 
+// AuthSuccessMsg indicates authorization succeeded.
+type AuthSuccessMsg struct{}
+
+// AuthErrorMsg indicates authorization failed.
+type AuthErrorMsg struct {
+	Err error
+}
+
 // MaintenanceStartedMsg indicates a maintenance command has started.
 type MaintenanceStartedMsg struct {
 	Command *maintenance.Command

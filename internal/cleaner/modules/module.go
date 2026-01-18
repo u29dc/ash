@@ -108,6 +108,12 @@ func NewRegistry() (*Registry, error) {
 	}
 	r.modules = append(r.modules, browsers)
 
+	apps, err := NewAppsModule()
+	if err != nil {
+		return nil, err
+	}
+	r.modules = append(r.modules, apps)
+
 	return r, nil
 }
 

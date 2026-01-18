@@ -26,6 +26,7 @@ const (
 	ViewScanning
 	ViewResults
 	ViewConfirm
+	ViewAuthorizing
 	ViewCleaning
 	ViewMaintenance
 )
@@ -113,6 +114,12 @@ type Model struct {
 	scanProgress float64
 	scanMessage  string
 
+	// Auth state
+	authGranted        bool
+	authInProgress     bool
+	pendingClean       []scanner.Entry
+	pendingMaintenance *maintenance.Command
+
 	// Clean state
 	cleaning   bool
 	cleanStats *cleaner.CleanStats
@@ -120,6 +127,9 @@ type Model struct {
 	// Maintenance state
 	maintenanceCommands []*maintenance.Command
 	maintenanceCursor   int
+	maintenanceRunning  bool
+	maintenanceResult   *maintenance.CommandResult
+	maintenanceActive   *maintenance.Command
 
 	// Components
 	spinner  spinner.Model
@@ -209,14 +219,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ScanCompleteMsg:
 		m.scanning = false
+		m.scanMessage = ""
 		m.entries = msg.Entries
 		m.totalSize = msg.TotalSize
+		m.selected = make(map[string]bool)
+		m.selectedSize = 0
+		m.selectedCount = 0
+		m.cursor = 0
+		m.offset = 0
+		m.lastError = nil
 		m.currentView = ViewResults
 		m.sortEntries()
 		return m, nil
 
 	case ScanErrorMsg:
 		m.scanning = false
+		m.scanMessage = ""
 		m.lastError = msg.Err
 		m.currentView = ViewHome
 		return m, nil
@@ -231,16 +249,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cleanStats = msg.Stats
 		m.currentView = ViewResults
 		// Remove cleaned entries
-		m.removeCleanedEntries()
+		m.removeCleanedEntries(msg.Stats)
 		return m, nil
 
 	case CleanErrorMsg:
 		m.cleaning = false
 		m.lastError = msg.Err
+		m.currentView = ViewResults
+		return m, nil
+
+	case AuthSuccessMsg:
+		m.authGranted = true
+		m.authInProgress = false
+		m.lastError = nil
+
+		if len(m.pendingClean) > 0 {
+			toClean := m.pendingClean
+			m.pendingClean = nil
+			m.cleaning = true
+			m.currentView = ViewCleaning
+			return m, tea.Batch(m.spinner.Tick, StartClean(m.ctx, toClean, false))
+		}
+
+		if m.pendingMaintenance != nil {
+			cmd := m.pendingMaintenance
+			m.pendingMaintenance = nil
+			m.maintenanceRunning = true
+			m.currentView = ViewMaintenance
+			m.maintenanceActive = cmd
+			return m, tea.Batch(m.spinner.Tick, RunMaintenanceCommand(m.ctx, cmd))
+		}
+
+		return m, nil
+
+	case AuthErrorMsg:
+		m.authInProgress = false
+		m.lastError = msg.Err
+		if len(m.pendingClean) > 0 {
+			m.pendingClean = nil
+			m.currentView = ViewConfirm
+		} else if m.pendingMaintenance != nil {
+			m.pendingMaintenance = nil
+			m.currentView = ViewMaintenance
+		}
 		return m, nil
 
 	case MaintenanceCompleteMsg:
 		// Handle maintenance result
+		m.maintenanceRunning = false
+		m.maintenanceActive = nil
+		m.maintenanceResult = msg.Result
+		if msg.Result != nil && msg.Result.Error != nil {
+			m.lastError = msg.Result.Error
+		} else {
+			m.lastError = nil
+		}
 		return m, nil
 
 	case ErrorMsg:
@@ -332,7 +395,7 @@ func (m *Model) handleDown() (tea.Model, tea.Cmd) {
 			m.maintenanceCursor++
 		}
 	case ViewHome:
-		if m.cursor < 2 { // 3 options: Scan, Maintenance, Quit
+		if m.cursor < 3 { // 4 options: Scan, Deep Scan, Maintenance, Quit
 			m.cursor++
 		}
 	default:
@@ -375,9 +438,9 @@ func (m *Model) handleSelectAll() (tea.Model, tea.Cmd) {
 		m.selected = make(map[string]bool)
 		m.selectedSize = 0
 		m.selectedCount = 0
-		for _, entry := range m.entries {
-			m.selected[entry.Path] = true
-			m.selectedSize += entry.Size
+		for i := range m.entries {
+			m.selected[m.entries[i].Path] = true
+			m.selectedSize += m.entries[i].Size
 			m.selectedCount++
 		}
 	}
@@ -388,41 +451,99 @@ func (m *Model) handleSelectAll() (tea.Model, tea.Cmd) {
 func (m *Model) handleConfirm() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case ViewHome:
-		switch m.cursor {
-		case 0: // Scan
-			m.currentView = ViewScanning
-			m.scanning = true
-			return m, tea.Batch(m.spinner.Tick, StartModuleScan(m.ctx))
-		case 1: // Maintenance
-			m.currentView = ViewMaintenance
-		case 2: // Quit
-			return m, tea.Quit
-		}
-
+		return m.handleConfirmHome()
 	case ViewResults:
-		if m.selectedCount > 0 {
-			m.currentView = ViewConfirm
-		}
-
+		return m.handleConfirmResults()
 	case ViewConfirm:
-		// Start cleaning
-		var toClean []scanner.Entry
-		for _, entry := range m.entries {
-			if m.selected[entry.Path] {
-				toClean = append(toClean, entry)
-			}
-		}
-		return m, tea.Batch(m.spinner.Tick, StartClean(m.ctx, toClean, false))
-
+		return m.handleConfirmCleanup()
 	case ViewMaintenance:
-		cmd := m.maintenanceCommands[m.maintenanceCursor]
-		return m, RunMaintenanceCommand(m.ctx, cmd)
-
+		return m.handleConfirmMaintenance()
 	default:
 		// No action for other views
 	}
 
 	return m, nil
+}
+
+func (m *Model) handleConfirmHome() (tea.Model, tea.Cmd) {
+	switch m.cursor {
+	case 0:
+		return m.startScan(false, "Scanning standard locations...")
+	case 1:
+		return m.startScan(true, "Scanning with app leftovers...")
+	case 2:
+		m.currentView = ViewMaintenance
+		return m, nil
+	case 3:
+		return m, tea.Quit
+	default:
+		return m, nil
+	}
+}
+
+func (m *Model) handleConfirmResults() (tea.Model, tea.Cmd) {
+	if m.selectedCount > 0 {
+		m.currentView = ViewConfirm
+	}
+	return m, nil
+}
+
+func (m *Model) handleConfirmCleanup() (tea.Model, tea.Cmd) {
+	toClean := m.selectedEntries()
+	if len(toClean) == 0 {
+		return m, nil
+	}
+	return m.beginCleanup(toClean)
+}
+
+func (m *Model) handleConfirmMaintenance() (tea.Model, tea.Cmd) {
+	cmd := m.maintenanceCommands[m.maintenanceCursor]
+	return m.beginMaintenance(cmd)
+}
+
+func (m *Model) startScan(includeAppData bool, message string) (tea.Model, tea.Cmd) {
+	m.currentView = ViewScanning
+	m.scanning = true
+	m.scanMessage = message
+	return m, tea.Batch(m.spinner.Tick, StartModuleScan(m.ctx, includeAppData))
+}
+
+func (m *Model) beginCleanup(entries []scanner.Entry) (tea.Model, tea.Cmd) {
+	if !m.authGranted {
+		return m.requestAuthForClean(entries)
+	}
+	m.lastError = nil
+	m.cleanStats = nil
+	m.cleaning = true
+	m.currentView = ViewCleaning
+	return m, tea.Batch(m.spinner.Tick, StartClean(m.ctx, entries, false))
+}
+
+func (m *Model) requestAuthForClean(entries []scanner.Entry) (tea.Model, tea.Cmd) {
+	m.lastError = nil
+	m.authInProgress = true
+	m.pendingClean = entries
+	m.currentView = ViewAuthorizing
+	return m, tea.Batch(m.spinner.Tick, RequestAuth(m.ctx))
+}
+
+func (m *Model) beginMaintenance(cmd *maintenance.Command) (tea.Model, tea.Cmd) {
+	if cmd.RequiresSudo && !m.authGranted {
+		return m.requestAuthForMaintenance(cmd)
+	}
+	m.lastError = nil
+	m.maintenanceResult = nil
+	m.maintenanceRunning = true
+	m.maintenanceActive = cmd
+	return m, tea.Batch(m.spinner.Tick, RunMaintenanceCommand(m.ctx, cmd))
+}
+
+func (m *Model) requestAuthForMaintenance(cmd *maintenance.Command) (tea.Model, tea.Cmd) {
+	m.lastError = nil
+	m.authInProgress = true
+	m.pendingMaintenance = cmd
+	m.currentView = ViewAuthorizing
+	return m, tea.Batch(m.spinner.Tick, RequestAuth(m.ctx))
 }
 
 func (m *Model) handleTab() (tea.Model, tea.Cmd) {
@@ -436,17 +557,45 @@ func (m *Model) sortEntries() {
 	})
 }
 
-func (m *Model) removeCleanedEntries() {
-	var remaining []scanner.Entry
-	for _, entry := range m.entries {
-		if !m.selected[entry.Path] {
-			remaining = append(remaining, entry)
+func (m *Model) selectedEntries() []scanner.Entry {
+	var selected []scanner.Entry
+	for i := range m.entries {
+		if m.selected[m.entries[i].Path] {
+			selected = append(selected, m.entries[i])
 		}
 	}
+	return selected
+}
+
+func (m *Model) removeCleanedEntries(stats *cleaner.CleanStats) {
+	failed := make(map[string]bool)
+	if stats != nil {
+		for _, result := range stats.Errors {
+			failed[result.Path] = true
+		}
+	}
+
+	var remaining []scanner.Entry
+	var totalSize int64
+	for i := range m.entries {
+		if m.selected[m.entries[i].Path] && !failed[m.entries[i].Path] {
+			continue
+		}
+		remaining = append(remaining, m.entries[i])
+		totalSize += m.entries[i].Size
+	}
 	m.entries = remaining
+	m.totalSize = totalSize
 	m.selected = make(map[string]bool)
 	m.selectedSize = 0
 	m.selectedCount = 0
+	for i := range remaining {
+		if failed[remaining[i].Path] {
+			m.selected[remaining[i].Path] = true
+			m.selectedSize += remaining[i].Size
+			m.selectedCount++
+		}
+	}
 	m.cursor = 0
 	m.offset = 0
 }
@@ -462,6 +611,8 @@ func (m Model) View() string {
 		return m.renderResults()
 	case ViewConfirm:
 		return m.renderConfirm()
+	case ViewAuthorizing:
+		return m.renderAuthorizing()
 	case ViewCleaning:
 		return m.renderCleaning()
 	case ViewMaintenance:
@@ -482,8 +633,12 @@ func (m Model) renderHome() string {
 	b.WriteString("\n")
 	b.WriteString(subtitle)
 	b.WriteString("\n\n")
+	if errLine := m.renderError(); errLine != "" {
+		b.WriteString(errLine)
+		b.WriteString("\n\n")
+	}
 
-	options := []string{"Scan for junk", "Maintenance", "Quit"}
+	options := []string{"Scan for junk", "Deep scan (includes app leftovers)", "Maintenance", "Quit"}
 
 	for i, opt := range options {
 		cursor := "  "
@@ -523,63 +678,88 @@ func (m Model) renderResults() string {
 	b.WriteString("\n")
 	b.WriteString(m.styles.Title.Render("Results"))
 	b.WriteString("\n")
+	b.WriteString(m.renderResultsSummary())
+	b.WriteString("\n\n")
+	if errLine := m.renderError(); errLine != "" {
+		b.WriteString(errLine)
+		b.WriteString("\n\n")
+	}
 
+	b.WriteString(m.renderResultsBody())
+
+	b.WriteString("\n")
+	b.WriteString(m.renderHelp())
+
+	return b.String()
+}
+
+func (m Model) renderResultsSummary() string {
 	summary := fmt.Sprintf("Found %d items (%s) | Selected %d items (%s)",
 		len(m.entries),
 		scanner.FormatSize(m.totalSize),
 		m.selectedCount,
 		scanner.FormatSize(m.selectedSize),
 	)
-	b.WriteString(m.styles.Subtitle.Render(summary))
-	b.WriteString("\n\n")
+	return m.styles.Subtitle.Render(summary)
+}
 
+func (m Model) renderResultsBody() string {
 	if len(m.entries) == 0 {
-		mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#525252"))
-		b.WriteString(mutedStyle.Render("No items found"))
-		b.WriteString("\n")
-	} else {
-		// Render visible entries
-		end := m.offset + m.pageSize
-		if end > len(m.entries) {
-			end = len(m.entries)
-		}
+		return m.renderResultsEmpty()
+	}
+	return m.renderResultsEntries()
+}
 
-		for i := m.offset; i < end; i++ {
-			entry := m.entries[i]
-			cursor := "  "
-			if i == m.cursor {
-				cursor = "> "
-			}
+func (m Model) renderResultsEmpty() string {
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#525252"))
+	return mutedStyle.Render("No items found") + "\n"
+}
 
-			checkbox := "[ ]"
-			if m.selected[entry.Path] {
-				checkbox = "[x]"
-			}
+func (m Model) renderResultsEntries() string {
+	var b strings.Builder
 
-			name := entry.Name
-			if len(name) > 40 {
-				name = name[:37] + "..."
-			}
-
-			size := scanner.FormatSize(entry.Size)
-
-			line := fmt.Sprintf("%s%s %s %s", cursor, checkbox,
-				lipgloss.NewStyle().Width(42).Render(name),
-				m.styles.FileSize.Render(size))
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
-
-		// Scrollbar indicator
-		if len(m.entries) > m.pageSize {
-			b.WriteString(fmt.Sprintf("\n[%d-%d of %d]", m.offset+1, end, len(m.entries)))
-		}
+	end := m.offset + m.pageSize
+	if end > len(m.entries) {
+		end = len(m.entries)
 	}
 
-	b.WriteString("\n")
-	b.WriteString(m.renderHelp())
+	for i := m.offset; i < end; i++ {
+		b.WriteString(m.renderResultsEntry(i))
+		b.WriteString("\n")
+	}
+
+	if len(m.entries) > m.pageSize {
+		b.WriteString(fmt.Sprintf("\n[%d-%d of %d]", m.offset+1, end, len(m.entries)))
+	}
 
 	return b.String()
+}
+
+func (m Model) renderResultsEntry(index int) string {
+	entry := m.entries[index]
+	cursor := "  "
+	if index == m.cursor {
+		cursor = "> "
+	}
+
+	checkbox := "[ ]"
+	if m.selected[entry.Path] {
+		checkbox = "[x]"
+	}
+
+	name := entry.Name
+	if len(name) > 40 {
+		name = name[:37] + "..."
+	}
+
+	size := scanner.FormatSize(entry.Size)
+
+	return fmt.Sprintf("%s%s %s %s",
+		cursor,
+		checkbox,
+		lipgloss.NewStyle().Width(42).Render(name),
+		m.styles.FileSize.Render(size),
+	)
 }
 
 func (m Model) renderConfirm() string {
@@ -593,6 +773,10 @@ func (m Model) renderConfirm() string {
 		m.selectedCount,
 		scanner.FormatSize(m.selectedSize),
 	))
+
+	if !m.authGranted {
+		b.WriteString("Authorization required before cleanup.\n\n")
+	}
 
 	b.WriteString("Press ENTER to confirm, ESC to cancel")
 
@@ -612,6 +796,19 @@ func (m Model) renderCleaning() string {
 	return b.String()
 }
 
+func (m Model) renderAuthorizing() string {
+	var b strings.Builder
+
+	b.WriteString("\n")
+	b.WriteString(m.styles.Title.Render("Authorizing..."))
+	b.WriteString("\n\n")
+	b.WriteString(m.spinner.View())
+	b.WriteString(" Waiting for Touch ID or password")
+	b.WriteString("\n")
+
+	return b.String()
+}
+
 func (m Model) renderMaintenance() string {
 	var b strings.Builder
 
@@ -620,6 +817,10 @@ func (m Model) renderMaintenance() string {
 	b.WriteString("\n")
 	b.WriteString(m.styles.Subtitle.Render("System maintenance commands"))
 	b.WriteString("\n\n")
+	if errLine := m.renderError(); errLine != "" {
+		b.WriteString(errLine)
+		b.WriteString("\n\n")
+	}
 
 	for i, cmd := range m.maintenanceCommands {
 		cursor := "  "
@@ -642,6 +843,20 @@ func (m Model) renderMaintenance() string {
 		b.WriteString("\n")
 	}
 
+	if m.maintenanceRunning && m.maintenanceActive != nil {
+		b.WriteString("\n")
+		b.WriteString(m.spinner.View())
+		b.WriteString(" Running ")
+		b.WriteString(m.maintenanceActive.Name)
+		b.WriteString("\n")
+	}
+
+	if m.maintenanceResult != nil {
+		b.WriteString("\n")
+		b.WriteString(m.renderMaintenanceResult())
+		b.WriteString("\n")
+	}
+
 	b.WriteString("\n")
 	b.WriteString(m.renderHelp())
 
@@ -658,9 +873,58 @@ func (m Model) renderHelp() string {
 		keys = []string{"j/k:navigate", "space:toggle", "a:all", "enter:clean", "esc:back", "q:quit"}
 	case ViewMaintenance:
 		keys = []string{"j/k:navigate", "enter:run", "esc:back", "q:quit"}
+	case ViewAuthorizing:
+		keys = []string{"authorizing"}
 	default:
 		keys = []string{"esc:back", "q:quit"}
 	}
 
 	return m.styles.StatusBar.Render(strings.Join(keys, " | "))
+}
+
+func (m Model) renderError() string {
+	if m.lastError == nil {
+		return ""
+	}
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
+	return style.Render("Error: " + m.lastError.Error())
+}
+
+func (m Model) renderMaintenanceResult() string {
+	if m.maintenanceResult == nil {
+		return ""
+	}
+
+	result := m.maintenanceResult
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
+	status := "Success"
+	if !result.Success {
+		statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
+		status = "Failed"
+	}
+
+	header := statusStyle.Render(fmt.Sprintf("%s: %s (%s)", status, result.Command.Name, result.Duration.String()))
+	output := strings.TrimSpace(result.Output)
+	if output == "" {
+		return header
+	}
+
+	output = truncateLines(output, 3, 200)
+	body := lipgloss.NewStyle().Foreground(lipgloss.Color("#a3a3a3")).Render(output)
+	return header + "\n" + body
+}
+
+func truncateLines(input string, maxLines int, maxLen int) string {
+	if input == "" {
+		return input
+	}
+	lines := strings.Split(input, "\n")
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	joined := strings.Join(lines, "\n")
+	if len(joined) > maxLen {
+		joined = joined[:maxLen-3] + "..."
+	}
+	return joined
 }

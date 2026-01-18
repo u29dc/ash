@@ -35,6 +35,11 @@ func NewHomeView(styles tui.Styles) *HomeView {
 				Action:      "scan",
 			},
 			{
+				Title:       "Deep Scan",
+				Description: "Include app leftovers (slower, more cautious)",
+				Action:      "deep-scan",
+			},
+			{
 				Title:       "Maintenance",
 				Description: "Run system maintenance commands",
 				Action:      "maintenance",
