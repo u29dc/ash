@@ -41,7 +41,8 @@ func (a *Analyzer) Analyze(entries []Entry) *Analysis {
 	}
 
 	// Calculate totals and group by category
-	for _, entry := range entries {
+	for i := range entries {
+		entry := entries[i]
 		analysis.TotalSize += entry.Size
 		analysis.TotalCount++
 
@@ -119,9 +120,9 @@ func (a *Analyzer) SortByDate(entries []Entry) []Entry {
 // FilterByCategory returns entries matching the given category.
 func (a *Analyzer) FilterByCategory(entries []Entry, category Category) []Entry {
 	var filtered []Entry
-	for _, entry := range entries {
-		if entry.Category == category {
-			filtered = append(filtered, entry)
+	for i := range entries {
+		if entries[i].Category == category {
+			filtered = append(filtered, entries[i])
 		}
 	}
 	return filtered
@@ -130,9 +131,9 @@ func (a *Analyzer) FilterByCategory(entries []Entry, category Category) []Entry 
 // FilterByRisk returns entries matching the given risk level.
 func (a *Analyzer) FilterByRisk(entries []Entry, risk RiskLevel) []Entry {
 	var filtered []Entry
-	for _, entry := range entries {
-		if entry.Risk == risk {
-			filtered = append(filtered, entry)
+	for i := range entries {
+		if entries[i].Risk == risk {
+			filtered = append(filtered, entries[i])
 		}
 	}
 	return filtered
@@ -141,9 +142,9 @@ func (a *Analyzer) FilterByRisk(entries []Entry, risk RiskLevel) []Entry {
 // FilterSelected returns only selected entries.
 func (a *Analyzer) FilterSelected(entries []Entry) []Entry {
 	var filtered []Entry
-	for _, entry := range entries {
-		if entry.Selected {
-			filtered = append(filtered, entry)
+	for i := range entries {
+		if entries[i].Selected {
+			filtered = append(filtered, entries[i])
 		}
 	}
 	return filtered

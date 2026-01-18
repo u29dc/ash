@@ -94,8 +94,8 @@ func (v *ResultsView) Toggle() {
 
 // SelectAll selects all entries.
 func (v *ResultsView) SelectAll() {
-	for _, entry := range v.entries {
-		v.selected[entry.Path] = true
+	for i := range v.entries {
+		v.selected[v.entries[i].Path] = true
 	}
 	v.updateSelectedStats()
 }
@@ -118,7 +118,8 @@ func (v *ResultsView) ToggleAll() {
 func (v *ResultsView) updateSelectedStats() {
 	v.selectedSize = 0
 	v.selectedCount = 0
-	for _, entry := range v.entries {
+	for i := range v.entries {
+		entry := v.entries[i]
 		if v.selected[entry.Path] {
 			v.selectedSize += entry.Size
 			v.selectedCount++
@@ -134,7 +135,8 @@ func (v *ResultsView) Selected() map[string]bool {
 // SelectedEntries returns the selected entries.
 func (v *ResultsView) SelectedEntries() []scanner.Entry {
 	var selected []scanner.Entry
-	for _, entry := range v.entries {
+	for i := range v.entries {
+		entry := v.entries[i]
 		if v.selected[entry.Path] {
 			selected = append(selected, entry)
 		}

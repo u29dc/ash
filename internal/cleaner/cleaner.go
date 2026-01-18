@@ -84,11 +84,11 @@ func (c *Cleaner) Clean(ctx context.Context, entries []scanner.Entry) (*CleanSta
 	}
 
 	// Validate all paths first
-	for _, entry := range entries {
-		if !safety.IsSafePath(entry.Path) {
-			return nil, errors.New("attempted to delete protected path: " + entry.Path)
+	for i := range entries {
+		if !safety.IsSafePath(entries[i].Path) {
+			return nil, errors.New("attempted to delete protected path: " + entries[i].Path)
 		}
-		stats.TotalSize += entry.Size
+		stats.TotalSize += entries[i].Size
 	}
 
 	// Process entries
@@ -96,9 +96,9 @@ func (c *Cleaner) Clean(ctx context.Context, entries []scanner.Entry) (*CleanSta
 	sem := make(chan struct{}, c.parallelism)
 	var wg sync.WaitGroup
 
-	for _, entry := range entries {
+	for i := range entries {
 		wg.Add(1)
-		go func(e scanner.Entry) {
+		go func(e *scanner.Entry) {
 			defer wg.Done()
 
 			select {
@@ -139,7 +139,7 @@ func (c *Cleaner) Clean(ctx context.Context, entries []scanner.Entry) (*CleanSta
 				Error:   err,
 				Size:    e.Size,
 			}
-		}(entry)
+		}(&entries[i])
 	}
 
 	// Close results channel when all goroutines complete
@@ -211,21 +211,21 @@ func (c *Cleaner) Preview(entries []scanner.Entry) (*CleanStats, error) {
 		TotalCount: len(entries),
 	}
 
-	for _, entry := range entries {
-		if !safety.IsSafePath(entry.Path) {
+	for i := range entries {
+		if !safety.IsSafePath(entries[i].Path) {
 			stats.FailedCount++
 			stats.Errors = append(stats.Errors, CleanResult{
-				Path:    entry.Path,
+				Path:    entries[i].Path,
 				Success: false,
 				Error:   errors.New("protected path"),
-				Size:    entry.Size,
+				Size:    entries[i].Size,
 			})
 			continue
 		}
 
 		stats.SuccessCount++
-		stats.TotalSize += entry.Size
-		stats.CleanedSize += entry.Size
+		stats.TotalSize += entries[i].Size
+		stats.CleanedSize += entries[i].Size
 	}
 
 	return stats, nil

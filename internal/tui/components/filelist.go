@@ -89,8 +89,8 @@ func (f *FileList) Toggle() {
 
 // SelectAll selects all entries.
 func (f *FileList) SelectAll() {
-	for _, entry := range f.entries {
-		f.selected[entry.Path] = true
+	for i := range f.entries {
+		f.selected[f.entries[i].Path] = true
 	}
 }
 
@@ -112,9 +112,9 @@ func (f *FileList) SelectedCount() int {
 // SelectedSize returns the total size of selected items.
 func (f *FileList) SelectedSize() int64 {
 	var size int64
-	for _, entry := range f.entries {
-		if f.selected[entry.Path] {
-			size += entry.Size
+	for i := range f.entries {
+		if f.selected[f.entries[i].Path] {
+			size += f.entries[i].Size
 		}
 	}
 	return size

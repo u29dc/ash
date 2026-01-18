@@ -156,7 +156,7 @@ func (v *MaintenanceView) renderResult(result *maintenance.CommandResult) string
 
 	if result.Success {
 		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
-		status = fmt.Sprintf("    + Completed in %s", result.Duration.Round(1))
+		status = fmt.Sprintf("    + Completed in %s", result.Duration.String())
 	} else {
 		style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
 		errMsg := "unknown error"

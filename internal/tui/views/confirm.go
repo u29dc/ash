@@ -38,8 +38,8 @@ func (v *ConfirmView) SetSize(width, height int) {
 func (v *ConfirmView) SetEntries(entries []scanner.Entry) {
 	v.entries = entries
 	v.totalSize = 0
-	for _, entry := range entries {
-		v.totalSize += entry.Size
+	for i := range entries {
+		v.totalSize += entries[i].Size
 	}
 }
 

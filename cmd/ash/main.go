@@ -101,7 +101,6 @@ func runDryRun() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	registry.EnableAll()
 
 	// Scan all modules
 	var allEntries []scanner.Entry
@@ -115,8 +114,8 @@ func runDryRun() {
 
 	// Group entries by category
 	byCategory := make(map[scanner.Category][]scanner.Entry)
-	for _, entry := range allEntries {
-		byCategory[entry.Category] = append(byCategory[entry.Category], entry)
+	for i := range allEntries {
+		byCategory[allEntries[i].Category] = append(byCategory[allEntries[i].Category], allEntries[i])
 	}
 
 	// Get home directory for path shortening
@@ -165,8 +164,8 @@ func printCategoryReport(entries []scanner.Entry, cat scanner.Category, homeDir 
 
 	// Calculate category totals
 	var catSize int64
-	for _, e := range entries {
-		catSize += e.Size
+	for i := range entries {
+		catSize += entries[i].Size
 	}
 
 	// Print category header
@@ -174,15 +173,15 @@ func printCategoryReport(entries []scanner.Entry, cat scanner.Category, homeDir 
 	fmt.Printf("%s (%d items, %s)\n", catName, len(entries), humanize.IBytes(uint64(catSize)))
 
 	// Print all entries
-	for _, e := range entries {
-		path := e.Path
+	for i := range entries {
+		path := entries[i].Path
 		if homeDir != "" && strings.HasPrefix(path, homeDir) {
 			path = "~" + path[len(homeDir):]
 		}
-		if e.IsSymlink {
-			fmt.Printf("  %-45s -> %-10s %10s\n", truncatePath(path, 45), truncatePath(e.SymlinkTarget, 10), humanize.IBytes(uint64(e.Size)))
+		if entries[i].IsSymlink {
+			fmt.Printf("  %-45s -> %-10s %10s\n", truncatePath(path, 45), truncatePath(entries[i].SymlinkTarget, 10), humanize.IBytes(uint64(entries[i].Size)))
 		} else {
-			fmt.Printf("  %-60s %10s\n", truncatePath(path, 60), humanize.IBytes(uint64(e.Size)))
+			fmt.Printf("  %-60s %10s\n", truncatePath(path, 60), humanize.IBytes(uint64(entries[i].Size)))
 		}
 	}
 	fmt.Println()
