@@ -80,22 +80,31 @@ func (c *Config) Save() error {
 	return os.WriteFile(configPath, data, 0644)
 }
 
-// ConfigPath returns the path to the config file.
-func ConfigPath() (string, error) {
-	homeDir, err := os.UserHomeDir()
+// configDir returns the resolved ash config directory.
+func configDir() (string, error) {
+	if ashHome := os.Getenv("ASH_HOME"); ashHome != "" {
+		return ashHome, nil
+	}
+	if toolsHome := os.Getenv("TOOLS_HOME"); toolsHome != "" {
+		return filepath.Join(toolsHome, "ash"), nil
+	}
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
+	return filepath.Join(home, ".tools", "ash"), nil
+}
 
-	return filepath.Join(homeDir, ".config", "ash", "config.json"), nil
+// ConfigPath returns the path to the config file.
+func ConfigPath() (string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
 }
 
 // ConfigDir returns the path to the config directory.
 func ConfigDir() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Join(homeDir, ".config", "ash"), nil
+	return configDir()
 }

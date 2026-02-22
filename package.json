@@ -10,10 +10,10 @@
   "scripts": {
     "dev----------------------------------": "",
     "dev": "go run ./cmd/ash",
-    "ash": "./bin/ash",
+    "ash": "\"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash\"",
     "build--------------------------------": "",
-    "build": "go build -ldflags \"-s -w\" -o bin/ash ./cmd/ash",
-    "build:release": "CGO_ENABLED=0 go build -ldflags \"-s -w\" -trimpath -o bin/ash ./cmd/ash",
+    "build": "go build -ldflags \"-s -w\" -o \"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash\" ./cmd/ash",
+    "build:release": "CGO_ENABLED=0 go build -ldflags \"-s -w\" -trimpath -o \"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash\" ./cmd/ash",
     "test---------------------------------": "",
     "test": "go test -race ./...",
     "test:verbose": "go test -v -race ./...",

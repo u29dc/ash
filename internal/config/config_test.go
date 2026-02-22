@@ -28,14 +28,26 @@ func TestDefaultConfig(t *testing.T) {
 func TestConfig_SaveAndLoad(t *testing.T) {
 	// Create temp config directory
 	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".config", "ash")
+	configDir := filepath.Join(tmpDir, ".tools", "ash")
 	err := os.MkdirAll(configDir, 0755)
 	require.NoError(t, err)
 
-	// Override home dir for test
+	// Clear env overrides so test uses HOME-based fallback
+	origAshHome := os.Getenv("ASH_HOME")
+	origToolsHome := os.Getenv("TOOLS_HOME")
 	origHome := os.Getenv("HOME")
+	os.Unsetenv("ASH_HOME")
+	os.Unsetenv("TOOLS_HOME")
 	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer func() {
+		os.Setenv("HOME", origHome)
+		if origAshHome != "" {
+			os.Setenv("ASH_HOME", origAshHome)
+		}
+		if origToolsHome != "" {
+			os.Setenv("TOOLS_HOME", origToolsHome)
+		}
+	}()
 
 	// Create and save config
 	cfg := config.DefaultConfig()
@@ -59,9 +71,22 @@ func TestConfig_LoadNonExistent(t *testing.T) {
 	// Create temp dir with no config
 	tmpDir := t.TempDir()
 
+	// Clear env overrides so test uses HOME-based fallback
+	origAshHome := os.Getenv("ASH_HOME")
+	origToolsHome := os.Getenv("TOOLS_HOME")
 	origHome := os.Getenv("HOME")
+	os.Unsetenv("ASH_HOME")
+	os.Unsetenv("TOOLS_HOME")
 	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer func() {
+		os.Setenv("HOME", origHome)
+		if origAshHome != "" {
+			os.Setenv("ASH_HOME", origAshHome)
+		}
+		if origToolsHome != "" {
+			os.Setenv("TOOLS_HOME", origToolsHome)
+		}
+	}()
 
 	// Load should return defaults
 	cfg, err := config.Load()

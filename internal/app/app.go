@@ -729,7 +729,7 @@ func (m Model) renderResultsEntries() string {
 	}
 
 	if len(m.entries) > m.pageSize {
-		b.WriteString(fmt.Sprintf("\n[%d-%d of %d]", m.offset+1, end, len(m.entries)))
+		fmt.Fprintf(&b, "\n[%d-%d of %d]", m.offset+1, end, len(m.entries))
 	}
 
 	return b.String()
@@ -769,10 +769,12 @@ func (m Model) renderConfirm() string {
 	b.WriteString(m.styles.DialogTitle.Render("Confirm Cleanup"))
 	b.WriteString("\n\n")
 
-	b.WriteString(fmt.Sprintf("Move %d items (%s) to Trash?\n\n",
+	fmt.Fprintf(
+		&b,
+		"Move %d items (%s) to Trash?\n\n",
 		m.selectedCount,
 		scanner.FormatSize(m.selectedSize),
-	))
+	)
 
 	if !m.authGranted {
 		b.WriteString("Authorization required before cleanup.\n\n")

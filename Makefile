@@ -46,7 +46,8 @@ clean:
 	rm -rf bin/ coverage.out
 
 install: build
-	cp bin/$(BINARY) /usr/local/bin/
+	mkdir -p "$${ASH_HOME:-$${TOOLS_HOME:-$$HOME/.tools}/ash}"
+	cp bin/$(BINARY) "$${ASH_HOME:-$${TOOLS_HOME:-$$HOME/.tools}/ash}/$(BINARY)"
 
 uninstall:
 	rm -f /usr/local/bin/$(BINARY)
