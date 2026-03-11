@@ -4,17 +4,16 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"ash/internal/safety"
 	"ash/internal/scanner"
-	plistutil "ash/pkg/plist"
 )
 
 // AppsModule handles app leftover cleanup.
 type AppsModule struct {
 	BaseModule
 	homeDir string
+	finder  *scanner.OrphanFinder
 }
 
 // NewAppsModule creates a new app leftover cleanup module.
@@ -23,9 +22,11 @@ func NewAppsModule() (*AppsModule, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newAppsModule(homeDir), nil
+}
 
+func newAppsModule(homeDir string) *AppsModule {
 	libDir := filepath.Join(homeDir, "Library")
-
 	m := &AppsModule{
 		BaseModule: BaseModule{
 			name:         "App Leftovers",
@@ -36,6 +37,7 @@ func NewAppsModule() (*AppsModule, error) {
 			enabled:      false, // Disabled by default - requires user opt-in
 		},
 		homeDir: homeDir,
+		finder:  scanner.NewOrphanFinderForHome(homeDir),
 	}
 
 	m.paths = []string{
@@ -51,140 +53,64 @@ func NewAppsModule() (*AppsModule, error) {
 		filepath.Join(libDir, "LaunchAgents"),
 	}
 
-	return m, nil
+	return m
 }
 
 // Scan discovers app leftover files.
 func (m *AppsModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
-	var entries []scanner.Entry
+	if m.finder == nil {
+		m.finder = scanner.NewOrphanFinderForHome(m.homeDir)
+	}
 
-	// Build set of installed app bundle IDs
-	installedApps := m.getInstalledAppBundleIDs()
+	leftovers, err := m.finder.FindAllOrphansContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	for _, basePath := range m.paths {
-		items, err := os.ReadDir(basePath)
+	entries := make([]scanner.Entry, 0, len(leftovers))
+	for _, leftover := range leftovers {
+		if err := ctx.Err(); err != nil {
+			return entries, err
+		}
+		if !safety.IsSafePath(leftover.Path) {
+			continue
+		}
+
+		info, err := os.Lstat(leftover.Path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, err
+			return entries, err
 		}
 
-		for _, item := range items {
-			select {
-			case <-ctx.Done():
-				return entries, ctx.Err()
-			default:
-			}
-
-			name := item.Name()
-			path := filepath.Join(basePath, name)
-
-			// Skip protected items
-			if !safety.IsSafePath(path) {
-				continue
-			}
-
-			// Skip system items
-			if strings.HasPrefix(name, "com.apple.") {
-				continue
-			}
-
-			// Check if this looks like an orphan
-			bundleID := m.extractBundleID(name)
-			if bundleID == "" {
-				continue
-			}
-
-			// Skip if app is still installed
-			if installedApps[bundleID] {
-				continue
-			}
-
-			// Skip protected apps
-			if safety.IsProtectedApp(bundleID) {
-				continue
-			}
-
-			info, err := item.Info()
-			if err != nil {
-				continue
-			}
-
-			size := info.Size()
-			if item.IsDir() {
-				size = calcDirSize(path)
-			}
-
-			entries = append(entries, scanner.Entry{
-				Path:     path,
-				Name:     name,
-				Size:     size,
-				ModTime:  info.ModTime(),
-				Category: scanner.CategoryAppData,
-				Risk:     scanner.RiskCaution,
-				BundleID: bundleID,
-				IsDir:    item.IsDir(),
-			})
+		bundleID := ""
+		if leftover.AppInfo != nil {
+			bundleID = leftover.AppInfo.BundleID
 		}
-	}
+		if bundleID != "" && safety.IsProtectedApp(bundleID) {
+			continue
+		}
 
-	return entries, nil
-}
+		isSymlink := info.Mode()&os.ModeSymlink != 0
+		var symlinkTarget string
+		if isSymlink {
+			symlinkTarget, _ = os.Readlink(leftover.Path)
+		}
 
-func (m *AppsModule) getInstalledAppBundleIDs() map[string]bool {
-	installed := make(map[string]bool)
-
-	appDirs := []string{
-		"/Applications",
-		filepath.Join(m.homeDir, "Applications"),
-	}
-
-	for _, appDir := range appDirs {
-		_ = filepath.WalkDir(appDir, func(path string, entry os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if !entry.IsDir() {
-				return nil
-			}
-			if !strings.HasSuffix(entry.Name(), ".app") {
-				return nil
-			}
-
-			bundleID := m.getBundleID(path)
-			if bundleID != "" {
-				installed[bundleID] = true
-			}
-
-			return filepath.SkipDir
+		entries = append(entries, scanner.Entry{
+			Path:          leftover.Path,
+			Name:          filepath.Base(leftover.Path),
+			Size:          leftover.Size,
+			ModTime:       info.ModTime(),
+			Category:      scanner.CategoryAppData,
+			Risk:          leftover.RiskLevel(),
+			BundleID:      bundleID,
+			IsDir:         info.IsDir(),
+			IsSymlink:     isSymlink,
+			SymlinkTarget: symlinkTarget,
 		})
 	}
 
-	return installed
-}
-
-func (m *AppsModule) getBundleID(appPath string) string {
-	plistPath := filepath.Join(appPath, "Contents", "Info.plist")
-	bundleID, err := plistutil.GetBundleID(plistPath)
-	if err != nil {
-		return ""
-	}
-	return bundleID
-}
-
-func (m *AppsModule) extractBundleID(name string) string {
-	// Remove common suffixes
-	suffixes := []string{".plist", ".savedState", ".binarycookies"}
-	result := name
-	for _, suffix := range suffixes {
-		result = strings.TrimSuffix(result, suffix)
-	}
-
-	// Check if it looks like a bundle ID (contains dots)
-	if strings.Count(result, ".") >= 2 {
-		return result
-	}
-
-	return ""
+	return entries, nil
 }
