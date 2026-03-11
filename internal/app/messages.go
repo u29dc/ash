@@ -3,8 +3,24 @@ package app
 import (
 	"ash/internal/cleaner"
 	"ash/internal/maintenance"
+	"ash/internal/safety"
 	"ash/internal/scanner"
 )
+
+// ScanStatus indicates whether a scan completed fully or partially.
+type ScanStatus string
+
+const (
+	ScanStatusComplete ScanStatus = "complete"
+	ScanStatusPartial  ScanStatus = "partial"
+	ScanStatusFailed   ScanStatus = "failed"
+)
+
+// ScanIssue describes a warning or module failure encountered during scanning.
+type ScanIssue struct {
+	Source  string
+	Message string
+}
 
 // ScanStartedMsg indicates scanning has started.
 type ScanStartedMsg struct{}
@@ -18,9 +34,12 @@ type ScanProgressMsg struct {
 
 // ScanCompleteMsg indicates scanning has completed.
 type ScanCompleteMsg struct {
-	Entries   []scanner.Entry
-	TotalSize int64
-	Duration  float64
+	Entries        []scanner.Entry
+	TotalSize      int64
+	Duration       float64
+	Status         ScanStatus
+	Issues         []ScanIssue
+	FullDiskAccess safety.PermissionStatus
 }
 
 // ScanErrorMsg indicates a scan error.

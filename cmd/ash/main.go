@@ -12,7 +12,7 @@ import (
 	"github.com/dustin/go-humanize"
 
 	"ash/internal/app"
-	"ash/internal/cleaner/modules"
+	"ash/internal/safety"
 	"ash/internal/scanner"
 )
 
@@ -94,41 +94,23 @@ For more information, visit: https://github.com/u29dc/ash
 
 func runDryRun() {
 	ctx := context.Background()
-
-	// Create module registry
-	registry, err := modules.NewRegistry()
+	result, err := app.RunModuleScan(ctx, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Scan all modules
-	var allEntries []scanner.Entry
-	for _, mod := range registry.EnabledModules() {
-		entries, scanErr := mod.Scan(ctx)
-		if scanErr != nil {
-			continue // Skip modules with errors
-		}
-		allEntries = append(allEntries, entries...)
-	}
-
 	// Group entries by category
 	byCategory := make(map[scanner.Category][]scanner.Entry)
-	for i := range allEntries {
-		byCategory[allEntries[i].Category] = append(byCategory[allEntries[i].Category], allEntries[i])
+	for i := range result.Entries {
+		byCategory[result.Entries[i].Category] = append(byCategory[result.Entries[i].Category], result.Entries[i])
 	}
 
-	// Get home directory for path shortening
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = ""
-	}
-
-	// Print report header
 	fmt.Println("ash - dry run report")
 	fmt.Println()
 
-	// Category display order
+	printDryRunStatus(result)
+
 	categoryOrder := []scanner.Category{
 		scanner.CategoryCaches,
 		scanner.CategoryLogs,
@@ -139,6 +121,7 @@ func runDryRun() {
 		scanner.CategoryOther,
 	}
 
+	homeDir := homeDirOrEmpty()
 	var totalSize int64
 	var totalCount int
 
@@ -154,6 +137,36 @@ func runDryRun() {
 
 	// Print summary
 	fmt.Printf("Summary: %d items, %s total\n", totalCount, humanize.IBytes(uint64(totalSize)))
+}
+
+func printDryRunStatus(result *app.ModuleScanResult) {
+	switch result.FullDiskAccess {
+	case safety.PermissionGranted:
+	case safety.PermissionDenied:
+		fmt.Println("Warning: Full Disk Access is not granted; results may be incomplete")
+		fmt.Println()
+	case safety.PermissionUnknown:
+		fmt.Println("Note: Full Disk Access could not be verified")
+		fmt.Println()
+	}
+
+	if result.Status == app.ScanStatusComplete {
+		return
+	}
+
+	fmt.Printf("Scan status: %s\n", result.Status)
+	for i := range result.Issues {
+		fmt.Printf("  - %s: %s\n", result.Issues[i].Source, result.Issues[i].Message)
+	}
+	fmt.Println()
+}
+
+func homeDirOrEmpty() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return homeDir
 }
 
 func printCategoryReport(entries []scanner.Entry, cat scanner.Category, homeDir string) (int64, int) {

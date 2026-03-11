@@ -14,6 +14,7 @@ import (
 
 	"ash/internal/cleaner"
 	"ash/internal/maintenance"
+	"ash/internal/safety"
 	"ash/internal/scanner"
 	"ash/internal/tui"
 )
@@ -110,19 +111,23 @@ type Model struct {
 	pageSize int
 
 	// Scan state
-	scanning     bool
-	scanProgress float64
-	scanMessage  string
+	scanning       bool
+	scanProgress   float64
+	scanMessage    string
+	scanStatus     ScanStatus
+	scanIssues     []ScanIssue
+	fullDiskAccess safety.PermissionStatus
 
 	// Auth state
 	authGranted        bool
 	authInProgress     bool
-	pendingClean       []scanner.Entry
 	pendingMaintenance *maintenance.Command
 
 	// Clean state
-	cleaning   bool
-	cleanStats *cleaner.CleanStats
+	cleaning      bool
+	cleanStats    *cleaner.CleanStats
+	confirmAck    bool
+	confirmIssues []string
 
 	// Maintenance state
 	maintenanceCommands []*maintenance.Command
@@ -168,6 +173,8 @@ func New() Model {
 		styles:              styles,
 		selected:            make(map[string]bool),
 		pageSize:            20,
+		scanStatus:          ScanStatusComplete,
+		fullDiskAccess:      safety.PermissionUnknown,
 		spinner:             s,
 		progress:            p,
 		keys:                DefaultKeyMap(),
@@ -210,6 +217,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ScanStartedMsg:
 		m.scanning = true
 		m.currentView = ViewScanning
+		m.scanStatus = ScanStatusComplete
+		m.scanIssues = nil
+		m.fullDiskAccess = safety.PermissionUnknown
+		m.confirmAck = false
+		m.confirmIssues = nil
+		m.lastError = nil
 		return m, m.spinner.Tick
 
 	case ScanProgressMsg:
@@ -222,11 +235,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scanMessage = ""
 		m.entries = msg.Entries
 		m.totalSize = msg.TotalSize
+		m.scanStatus = msg.Status
+		m.scanIssues = msg.Issues
+		m.fullDiskAccess = msg.FullDiskAccess
 		m.selected = make(map[string]bool)
 		m.selectedSize = 0
 		m.selectedCount = 0
 		m.cursor = 0
 		m.offset = 0
+		m.confirmAck = false
+		m.confirmIssues = nil
 		m.lastError = nil
 		m.currentView = ViewResults
 		m.sortEntries()
@@ -235,6 +253,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ScanErrorMsg:
 		m.scanning = false
 		m.scanMessage = ""
+		m.scanStatus = ScanStatusFailed
+		m.scanIssues = nil
+		m.fullDiskAccess = safety.PermissionUnknown
+		m.confirmAck = false
+		m.confirmIssues = nil
 		m.lastError = msg.Err
 		m.currentView = ViewHome
 		return m, nil
@@ -248,6 +271,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cleaning = false
 		m.cleanStats = msg.Stats
 		m.currentView = ViewResults
+		m.confirmAck = false
+		m.confirmIssues = nil
 		// Remove cleaned entries
 		m.removeCleanedEntries(msg.Stats)
 		return m, nil
@@ -263,14 +288,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.authInProgress = false
 		m.lastError = nil
 
-		if len(m.pendingClean) > 0 {
-			toClean := m.pendingClean
-			m.pendingClean = nil
-			m.cleaning = true
-			m.currentView = ViewCleaning
-			return m, tea.Batch(m.spinner.Tick, StartClean(m.ctx, toClean, false))
-		}
-
 		if m.pendingMaintenance != nil {
 			cmd := m.pendingMaintenance
 			m.pendingMaintenance = nil
@@ -285,10 +302,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AuthErrorMsg:
 		m.authInProgress = false
 		m.lastError = msg.Err
-		if len(m.pendingClean) > 0 {
-			m.pendingClean = nil
-			m.currentView = ViewConfirm
-		} else if m.pendingMaintenance != nil {
+		if m.pendingMaintenance != nil {
 			m.pendingMaintenance = nil
 			m.currentView = ViewMaintenance
 		}
@@ -351,6 +365,8 @@ func (m *Model) handleBack() (tea.Model, tea.Cmd) {
 		m.currentView = ViewHome
 		m.cursor = 0
 	case ViewConfirm:
+		m.confirmAck = false
+		m.confirmIssues = nil
 		m.currentView = ViewResults
 	default:
 		// No action for other views
@@ -483,6 +499,7 @@ func (m *Model) handleConfirmHome() (tea.Model, tea.Cmd) {
 
 func (m *Model) handleConfirmResults() (tea.Model, tea.Cmd) {
 	if m.selectedCount > 0 {
+		m.prepareCleanupConfirmation()
 		m.currentView = ViewConfirm
 	}
 	return m, nil
@@ -491,6 +508,10 @@ func (m *Model) handleConfirmResults() (tea.Model, tea.Cmd) {
 func (m *Model) handleConfirmCleanup() (tea.Model, tea.Cmd) {
 	toClean := m.selectedEntries()
 	if len(toClean) == 0 {
+		return m, nil
+	}
+	if len(m.confirmIssues) > 0 && !m.confirmAck {
+		m.confirmAck = true
 		return m, nil
 	}
 	return m.beginCleanup(toClean)
@@ -505,26 +526,21 @@ func (m *Model) startScan(includeAppData bool, message string) (tea.Model, tea.C
 	m.currentView = ViewScanning
 	m.scanning = true
 	m.scanMessage = message
+	m.scanStatus = ScanStatusComplete
+	m.scanIssues = nil
+	m.fullDiskAccess = safety.PermissionUnknown
+	m.confirmAck = false
+	m.confirmIssues = nil
+	m.lastError = nil
 	return m, tea.Batch(m.spinner.Tick, StartModuleScan(m.ctx, includeAppData))
 }
 
 func (m *Model) beginCleanup(entries []scanner.Entry) (tea.Model, tea.Cmd) {
-	if !m.authGranted {
-		return m.requestAuthForClean(entries)
-	}
 	m.lastError = nil
 	m.cleanStats = nil
 	m.cleaning = true
 	m.currentView = ViewCleaning
 	return m, tea.Batch(m.spinner.Tick, StartClean(m.ctx, entries, false))
-}
-
-func (m *Model) requestAuthForClean(entries []scanner.Entry) (tea.Model, tea.Cmd) {
-	m.lastError = nil
-	m.authInProgress = true
-	m.pendingClean = entries
-	m.currentView = ViewAuthorizing
-	return m, tea.Batch(m.spinner.Tick, RequestAuth(m.ctx))
 }
 
 func (m *Model) beginMaintenance(cmd *maintenance.Command) (tea.Model, tea.Cmd) {
@@ -565,6 +581,47 @@ func (m *Model) selectedEntries() []scanner.Entry {
 		}
 	}
 	return selected
+}
+
+func (m *Model) prepareCleanupConfirmation() {
+	m.confirmAck = false
+	m.confirmIssues = confirmationIssuesForEntries(m.selectedEntries())
+}
+
+func confirmationIssuesForEntries(entries []scanner.Entry) []string {
+	seen := make(map[string]bool)
+	var issues []string
+
+	for i := range entries {
+		if !safety.RequiresConfirmation(entries[i].Path, entries[i].Size) {
+			continue
+		}
+
+		issue := confirmationIssue(entries[i])
+		if issue == "" || seen[issue] {
+			continue
+		}
+		seen[issue] = true
+		issues = append(issues, issue)
+	}
+
+	sort.Strings(issues)
+	return issues
+}
+
+func confirmationIssue(entry scanner.Entry) string {
+	switch {
+	case strings.Contains(entry.Path, "MobileSync/Backup"):
+		return "Selection includes iOS backups."
+	case strings.Contains(entry.Path, "Xcode/Archives"):
+		return "Selection includes Xcode archives."
+	case entry.Size > safety.SizeConfirmationThreshold:
+		return fmt.Sprintf("Selection includes items larger than %s.", scanner.FormatSize(safety.SizeConfirmationThreshold))
+	case strings.Contains(entry.Path, "Application Support"):
+		return "Selection includes Application Support data."
+	default:
+		return ""
+	}
 }
 
 func (m *Model) removeCleanedEntries(stats *cleaner.CleanStats) {
@@ -684,6 +741,10 @@ func (m Model) renderResults() string {
 		b.WriteString(errLine)
 		b.WriteString("\n\n")
 	}
+	if issues := m.renderScanIssues(); issues != "" {
+		b.WriteString(issues)
+		b.WriteString("\n")
+	}
 
 	b.WriteString(m.renderResultsBody())
 
@@ -694,13 +755,34 @@ func (m Model) renderResults() string {
 }
 
 func (m Model) renderResultsSummary() string {
-	summary := fmt.Sprintf("Found %d items (%s) | Selected %d items (%s)",
+	summary := fmt.Sprintf("Found %d items (%s) | Selected %d items (%s) | Scan %s",
 		len(m.entries),
 		scanner.FormatSize(m.totalSize),
 		m.selectedCount,
 		scanner.FormatSize(m.selectedSize),
+		m.scanStatus,
 	)
 	return m.styles.Subtitle.Render(summary)
+}
+
+func (m Model) renderScanIssues() string {
+	if len(m.scanIssues) == 0 && m.fullDiskAccess != safety.PermissionDenied && m.fullDiskAccess != safety.PermissionUnknown {
+		return ""
+	}
+
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
+	lines := make([]string, 0, len(m.scanIssues)+1)
+	switch m.fullDiskAccess {
+	case safety.PermissionGranted:
+	case safety.PermissionDenied:
+		lines = append(lines, "Warning: Full Disk Access is not granted; results may be incomplete.")
+	case safety.PermissionUnknown:
+		lines = append(lines, "Note: Full Disk Access could not be verified.")
+	}
+	for i := range m.scanIssues {
+		lines = append(lines, fmt.Sprintf("Warning: %s: %s", m.scanIssues[i].Source, m.scanIssues[i].Message))
+	}
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) renderResultsBody() string {
@@ -712,6 +794,9 @@ func (m Model) renderResultsBody() string {
 
 func (m Model) renderResultsEmpty() string {
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#525252"))
+	if m.scanStatus == ScanStatusFailed {
+		return mutedStyle.Render("Scan failed before any cleanable items were collected") + "\n"
+	}
 	return mutedStyle.Render("No items found") + "\n"
 }
 
@@ -766,7 +851,11 @@ func (m Model) renderConfirm() string {
 	var b strings.Builder
 
 	b.WriteString("\n")
-	b.WriteString(m.styles.DialogTitle.Render("Confirm Cleanup"))
+	title := "Confirm Cleanup"
+	if len(m.confirmIssues) > 0 {
+		title = "High-Risk Cleanup"
+	}
+	b.WriteString(m.styles.DialogTitle.Render(title))
 	b.WriteString("\n\n")
 
 	fmt.Fprintf(
@@ -776,11 +865,23 @@ func (m Model) renderConfirm() string {
 		scanner.FormatSize(m.selectedSize),
 	)
 
-	if !m.authGranted {
-		b.WriteString("Authorization required before cleanup.\n\n")
+	if len(m.confirmIssues) > 0 {
+		for i := range m.confirmIssues {
+			b.WriteString("- ")
+			b.WriteString(m.confirmIssues[i])
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
 	}
 
-	b.WriteString("Press ENTER to confirm, ESC to cancel")
+	switch {
+	case len(m.confirmIssues) > 0 && !m.confirmAck:
+		b.WriteString("Press ENTER to acknowledge the risks, ESC to cancel")
+	case len(m.confirmIssues) > 0:
+		b.WriteString("Risks acknowledged. Press ENTER to move items to Trash, ESC to cancel")
+	default:
+		b.WriteString("Press ENTER to confirm, ESC to cancel")
+	}
 
 	return b.String()
 }
@@ -873,6 +974,12 @@ func (m Model) renderHelp() string {
 		keys = []string{"j/k:navigate", "enter:select", "q:quit"}
 	case ViewResults:
 		keys = []string{"j/k:navigate", "space:toggle", "a:all", "enter:clean", "esc:back", "q:quit"}
+	case ViewConfirm:
+		if len(m.confirmIssues) > 0 && !m.confirmAck {
+			keys = []string{"enter:acknowledge", "esc:back", "q:quit"}
+		} else {
+			keys = []string{"enter:confirm", "esc:back", "q:quit"}
+		}
 	case ViewMaintenance:
 		keys = []string{"j/k:navigate", "enter:run", "esc:back", "q:quit"}
 	case ViewAuthorizing:

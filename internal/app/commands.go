@@ -2,77 +2,205 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os/exec"
+	"sort"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"ash/internal/cleaner"
 	"ash/internal/cleaner/modules"
+	"ash/internal/config"
 	"ash/internal/maintenance"
+	"ash/internal/safety"
 	"ash/internal/scanner"
 )
 
-// StartScan returns a command that starts the scanning process.
-func StartScan(ctx context.Context, categories []scanner.Category) tea.Cmd {
-	return func() tea.Msg {
-		s, err := scanner.New()
-		if err != nil {
-			return ScanErrorMsg{Err: err}
-		}
+const defaultModuleScanParallelism = 4
 
-		opts := scanner.ScanOptions{
-			Categories:    categories,
-			IncludeHidden: false,
-			Parallelism:   4,
-		}
+type moduleScanOutput struct {
+	entries []scanner.Entry
+	err     error
+	name    string
+}
 
-		result, err := s.ScanAll(ctx, opts)
-		if err != nil {
-			return ScanErrorMsg{Err: err}
-		}
+// ModuleScanResult contains the aggregated result of scanning enabled modules.
+type ModuleScanResult struct {
+	Entries        []scanner.Entry
+	TotalSize      int64
+	Status         ScanStatus
+	Issues         []ScanIssue
+	FullDiskAccess safety.PermissionStatus
+}
 
-		return ScanCompleteMsg{
-			Entries:   result.Entries,
-			TotalSize: result.TotalSize,
-			Duration:  result.Duration.Seconds(),
+// RunModuleScan scans enabled modules and returns a complete or partial result.
+func RunModuleScan(ctx context.Context, includeAppData bool) (*ModuleScanResult, error) {
+	registry, err := modules.NewRegistry()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := config.Load(); err != nil {
+		return nil, err
+	}
+
+	for _, mod := range registry.Modules() {
+		if mod.Category() != scanner.CategoryAppData {
+			continue
+		}
+		mod.SetEnabled(includeAppData)
+	}
+
+	return scanModules(ctx, registry.EnabledModules(), safety.CheckFullDiskAccess)
+}
+
+func scanModules(
+	ctx context.Context,
+	enabled []modules.Module,
+	fdaCheck func() safety.PermissionStatus,
+) (*ModuleScanResult, error) {
+	result := newModuleScanResult(fdaCheck)
+	if len(enabled) == 0 {
+		return result, nil
+	}
+
+	outputs, err := collectModuleOutputs(ctx, enabled)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, output := range outputs {
+		if err := result.applyModuleOutput(output); err != nil {
+			return nil, err
 		}
 	}
+
+	if len(result.Issues) > 0 && len(result.Entries) == 0 {
+		result.Status = ScanStatusFailed
+	}
+	sort.Slice(result.Issues, func(i, j int) bool {
+		return result.Issues[i].Source < result.Issues[j].Source
+	})
+
+	return result, nil
+}
+
+func newModuleScanResult(fdaCheck func() safety.PermissionStatus) *ModuleScanResult {
+	result := &ModuleScanResult{
+		Entries: make([]scanner.Entry, 0, 256),
+		Status:  ScanStatusComplete,
+	}
+
+	if fdaCheck == nil {
+		return result
+	}
+
+	result.FullDiskAccess = fdaCheck()
+	if result.FullDiskAccess == safety.PermissionDenied {
+		result.Status = ScanStatusPartial
+		result.Issues = append(result.Issues, ScanIssue{
+			Source:  "full disk access",
+			Message: "not granted; some directories may be skipped",
+		})
+	}
+
+	return result
+}
+
+func collectModuleOutputs(ctx context.Context, enabled []modules.Module) ([]moduleScanOutput, error) {
+	outputs := make([]moduleScanOutput, len(enabled))
+	parallelism := minInt(moduleScanParallelism(), len(enabled))
+	sem := make(chan struct{}, parallelism)
+	var wg sync.WaitGroup
+
+	for i, mod := range enabled {
+		wg.Add(1)
+		go func(index int, module modules.Module) {
+			defer wg.Done()
+
+			select {
+			case <-ctx.Done():
+				outputs[index] = moduleScanOutput{
+					err:  ctx.Err(),
+					name: module.Name(),
+				}
+				return
+			case sem <- struct{}{}:
+			}
+			defer func() { <-sem }()
+
+			entries, err := module.Scan(ctx)
+			outputs[index] = moduleScanOutput{
+				entries: entries,
+				err:     err,
+				name:    module.Name(),
+			}
+		}(i, mod)
+	}
+
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	return outputs, nil
+}
+
+func (r *ModuleScanResult) applyModuleOutput(output moduleScanOutput) error {
+	if output.err != nil {
+		if errors.Is(output.err, context.Canceled) {
+			return output.err
+		}
+		r.Status = ScanStatusPartial
+		r.Issues = append(r.Issues, ScanIssue{
+			Source:  output.name,
+			Message: output.err.Error(),
+		})
+		return nil
+	}
+
+	for i := range output.entries {
+		r.Entries = append(r.Entries, output.entries[i])
+		r.TotalSize += output.entries[i].Size
+	}
+
+	return nil
+}
+
+func moduleScanParallelism() int {
+	parallelism := defaultModuleScanParallelism
+	cfg, err := config.Load()
+	if err == nil && cfg.Parallelism > 0 {
+		parallelism = cfg.Parallelism
+	}
+	if parallelism < 1 {
+		return 1
+	}
+	return parallelism
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // StartModuleScan returns a command that scans using cleanup modules.
 func StartModuleScan(ctx context.Context, includeAppData bool) tea.Cmd {
 	return func() tea.Msg {
-		registry, err := modules.NewRegistry()
+		result, err := RunModuleScan(ctx, includeAppData)
 		if err != nil {
 			return ScanErrorMsg{Err: err}
 		}
 
-		for _, mod := range registry.Modules() {
-			if mod.Category() != scanner.CategoryAppData {
-				continue
-			}
-			mod.SetEnabled(includeAppData)
-		}
-
-		var allEntries []scanner.Entry
-		var totalSize int64
-
-		for _, mod := range registry.EnabledModules() {
-			entries, err := mod.Scan(ctx)
-			if err != nil {
-				continue
-			}
-
-			for i := range entries {
-				allEntries = append(allEntries, entries[i])
-				totalSize += entries[i].Size
-			}
-		}
-
 		return ScanCompleteMsg{
-			Entries:   allEntries,
-			TotalSize: totalSize,
+			Entries:        result.Entries,
+			TotalSize:      result.TotalSize,
+			Status:         result.Status,
+			Issues:         result.Issues,
+			FullDiskAccess: result.FullDiskAccess,
 		}
 	}
 }
@@ -80,10 +208,7 @@ func StartModuleScan(ctx context.Context, includeAppData bool) tea.Cmd {
 // StartClean returns a command that starts the cleaning process.
 func StartClean(ctx context.Context, entries []scanner.Entry, dryRun bool) tea.Cmd {
 	return func() tea.Msg {
-		c := cleaner.New(
-			cleaner.WithDryRun(dryRun),
-			cleaner.WithTrash(true),
-		)
+		c := cleaner.New(cleaner.WithDryRun(dryRun))
 
 		stats, err := c.Clean(ctx, entries)
 		if err != nil {
@@ -96,7 +221,7 @@ func StartClean(ctx context.Context, entries []scanner.Entry, dryRun bool) tea.C
 
 // RequestAuth requests authorization once for privileged operations.
 func RequestAuth(ctx context.Context) tea.Cmd {
-	cmd := exec.CommandContext(ctx, "sudo", "-v")
+	cmd := exec.CommandContext(ctx, "/usr/bin/sudo", "-v")
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
 			return AuthErrorMsg{Err: err}
