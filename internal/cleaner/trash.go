@@ -1,6 +1,9 @@
 package cleaner
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,7 +11,10 @@ import (
 	"sync/atomic"
 
 	"github.com/charlievieth/fastwalk"
+	"golang.org/x/sys/unix"
 )
+
+const trashDirPerm = 0o700
 
 // MoveToTrash moves a file or directory to the macOS Trash.
 // Uses direct filesystem move to ~/.Trash to avoid Touch ID prompts.
@@ -20,45 +26,94 @@ func MoveToTrash(path string) error {
 
 	trashDir := filepath.Join(homeDir, ".Trash")
 
-	// Ensure trash directory exists
-	if err := os.MkdirAll(trashDir, 0755); err != nil {
+	if err := ensureTrashDir(trashDir); err != nil {
 		return err
 	}
 
-	// Generate unique destination name if file already exists in Trash
-	baseName := filepath.Base(path)
-	destPath := filepath.Join(trashDir, baseName)
-
-	counter := 1
-	for counter <= 100 {
-		if _, err := os.Stat(destPath); os.IsNotExist(err) {
-			break
-		}
-		ext := filepath.Ext(baseName)
-		name := baseName[:len(baseName)-len(ext)]
-		destPath = filepath.Join(trashDir, fmt.Sprintf("%s %d%s", name, counter, ext))
-		counter++
-	}
-	if counter > 100 {
-		return fmt.Errorf("too many files with name %q in trash", baseName)
+	baseName := filepath.Base(filepath.Clean(path))
+	primaryDest := filepath.Join(trashDir, baseName)
+	if err := renameExclusive(path, primaryDest); err == nil {
+		return nil
+	} else if !isRenameConflict(err) {
+		return err
 	}
 
-	return os.Rename(path, destPath)
+	return moveToUniqueTrashDestination(path, trashDir, baseName)
 }
 
-// permanentDelete permanently removes a file or directory.
-// This is irreversible and should be used with caution.
-func permanentDelete(path string) error {
-	info, err := os.Stat(path)
+func ensureTrashDir(trashDir string) error {
+	if err := os.MkdirAll(trashDir, trashDirPerm); err != nil {
+		return err
+	}
+
+	info, err := os.Lstat(trashDir)
 	if err != nil {
 		return err
 	}
-
-	if info.IsDir() {
-		return os.RemoveAll(path)
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("trash path must not be a symlink: %s", trashDir)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("trash path is not a directory: %s", trashDir)
 	}
 
-	return os.Remove(path)
+	if info.Mode().Perm() != trashDirPerm {
+		if err := os.Chmod(trashDir, trashDirPerm); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func uniqueTrashDestination(trashDir, baseName string) (string, error) {
+	ext := filepath.Ext(baseName)
+	name := baseName[:len(baseName)-len(ext)]
+	if name == "" {
+		name = baseName
+	}
+
+	suffix, err := randomTrashSuffix()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(trashDir, fmt.Sprintf("%s %s%s", name, suffix, ext)), nil
+}
+
+func randomTrashSuffix() (string, error) {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf[:]), nil
+}
+
+func renameExclusive(sourcePath, destPath string) error {
+	return unix.RenameatxNp(unix.AT_FDCWD, sourcePath, unix.AT_FDCWD, destPath, unix.RENAME_EXCL)
+}
+
+func moveToUniqueTrashDestination(path, trashDir, baseName string) error {
+	for attempt := 0; attempt < 100; attempt++ {
+		destPath, err := uniqueTrashDestination(trashDir, baseName)
+		if err != nil {
+			return err
+		}
+		err = renameExclusive(path, destPath)
+		if err == nil {
+			return nil
+		}
+		if isRenameConflict(err) {
+			continue
+		}
+		return err
+	}
+
+	return fmt.Errorf("too many files with name %q in trash", baseName)
+}
+
+func isRenameConflict(err error) bool {
+	return errors.Is(err, unix.EEXIST) || errors.Is(err, unix.ENOTEMPTY)
 }
 
 // EmptyTrash empties the macOS Trash.

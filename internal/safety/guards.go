@@ -53,7 +53,12 @@ const SizeConfirmationThreshold int64 = 1024 * 1024 * 1024
 
 // IsSafePath checks if a path is safe to delete.
 func IsSafePath(path string) bool {
-	expanded := expandPath(path)
+	expanded := filepath.Clean(expandPath(path))
+	originalExpanded := expanded
+
+	if isBlockedSymlinkTarget(originalExpanded) {
+		return false
+	}
 
 	// Resolve symlinks to prevent bypass attacks (e.g., symlink pointing to ~/.ssh)
 	resolved, err := filepath.EvalSymlinks(expanded)
@@ -62,30 +67,7 @@ func IsSafePath(path string) bool {
 	}
 	// If symlink resolution fails (e.g., broken symlink), continue with original path
 
-	// Check never-delete directories against both original and resolved paths
-	originalExpanded := expandPath(path)
-	for _, blocked := range neverDelete {
-		blockedExpanded := expandPath(blocked)
-		// Check both the resolved path and original path against blocked directories
-		if strings.HasPrefix(expanded, blockedExpanded) || strings.HasPrefix(originalExpanded, blockedExpanded) {
-			return false
-		}
-	}
-
-	// Check never-delete patterns
-	base := filepath.Base(path)
-	for _, pattern := range neverDeletePatterns {
-		matched, err := filepath.Match(pattern, base)
-		if err != nil {
-			return false // Treat invalid patterns as blocked for safety
-		}
-		if matched {
-			return false
-		}
-	}
-
-	// Check if path contains .git directory
-	if containsGitDir(path) {
+	if isBlockedPath(expanded, originalExpanded) || matchesNeverDeletePattern(path) || containsGitDir(path) {
 		return false
 	}
 
@@ -168,6 +150,69 @@ func containsGitDir(path string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+func pathHasPrefix(path, prefix string) bool {
+	rel, err := filepath.Rel(prefix, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")
+}
+
+func readSymlinkTarget(path string) (string, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", false
+	}
+
+	target, err := os.Readlink(path)
+	if err != nil {
+		return "", false
+	}
+	if filepath.IsAbs(target) {
+		return target, true
+	}
+	return filepath.Join(filepath.Dir(path), target), true
+}
+
+func isBlockedSymlinkTarget(path string) bool {
+	symlinkTarget, ok := readSymlinkTarget(path)
+	if !ok {
+		return false
+	}
+
+	expandedTarget := filepath.Clean(expandPath(symlinkTarget))
+	for _, blocked := range neverDelete {
+		if pathHasPrefix(expandedTarget, filepath.Clean(expandPath(blocked))) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isBlockedPath(resolvedPath, originalPath string) bool {
+	for _, blocked := range neverDelete {
+		blockedExpanded := filepath.Clean(expandPath(blocked))
+		if pathHasPrefix(resolvedPath, blockedExpanded) || pathHasPrefix(originalPath, blockedExpanded) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func matchesNeverDeletePattern(path string) bool {
+	base := filepath.Base(path)
+	for _, pattern := range neverDeletePatterns {
+		matched, err := filepath.Match(pattern, base)
+		if err != nil || matched {
+			return true
+		}
+	}
+
 	return false
 }
 

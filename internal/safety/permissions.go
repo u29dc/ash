@@ -50,7 +50,7 @@ func CheckFullDiskAccess() PermissionStatus {
 
 // CheckSudoAccess checks if the current user has sudo privileges.
 func CheckSudoAccess() bool {
-	cmd := exec.Command("sudo", "-n", "true")
+	cmd := exec.Command("/usr/bin/sudo", "-n", "true")
 	err := cmd.Run()
 	return err == nil
 }

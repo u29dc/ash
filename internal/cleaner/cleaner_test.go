@@ -13,52 +13,6 @@ import (
 	"ash/internal/scanner"
 )
 
-func TestCleaner_New(t *testing.T) {
-	tests := []struct {
-		name      string
-		opts      []cleaner.Option
-		wantDry   bool
-		wantTrash bool
-	}{
-		{
-			name:      "default options",
-			opts:      nil,
-			wantDry:   false,
-			wantTrash: true,
-		},
-		{
-			name:      "dry run enabled",
-			opts:      []cleaner.Option{cleaner.WithDryRun(true)},
-			wantDry:   true,
-			wantTrash: true,
-		},
-		{
-			name:      "trash disabled",
-			opts:      []cleaner.Option{cleaner.WithTrash(false)},
-			wantDry:   false,
-			wantTrash: false,
-		},
-		{
-			name: "multiple options",
-			opts: []cleaner.Option{
-				cleaner.WithDryRun(true),
-				cleaner.WithTrash(false),
-				cleaner.WithParallelism(8),
-			},
-			wantDry:   true,
-			wantTrash: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := cleaner.New(tt.opts...)
-			assert.Equal(t, tt.wantDry, c.IsDryRun())
-			assert.Equal(t, tt.wantTrash, c.UsesTrash())
-		})
-	}
-}
-
 func TestCleaner_Preview(t *testing.T) {
 	entries := []scanner.Entry{
 		{Path: "/tmp/safe1.txt", Size: 100},
@@ -89,39 +43,30 @@ func TestCleaner_Preview_ProtectedPaths(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 3, stats.TotalCount)
-	assert.Equal(t, 1, stats.SuccessCount) // Only /tmp/safe.txt
-	assert.Equal(t, 2, stats.FailedCount)  // .ssh and /System
+	assert.Equal(t, 1, stats.SuccessCount)
+	assert.Equal(t, 2, stats.FailedCount)
 	assert.Len(t, stats.Errors, 2)
 }
 
 func TestCleaner_Clean_DryRun(t *testing.T) {
-	// Create a temporary file
-	dir := t.TempDir()
-	testFile := filepath.Join(dir, "test.txt")
-	err := os.WriteFile(testFile, []byte("test"), 0644)
-	require.NoError(t, err)
+	testFile := filepath.Join(t.TempDir(), "test.txt")
+	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0o644))
 
-	entries := []scanner.Entry{
-		{Path: testFile, Size: 4},
-	}
-
-	// Clean with dry run
 	c := cleaner.New(cleaner.WithDryRun(true))
-	ctx := context.Background()
-	stats, err := c.Clean(ctx, entries)
+	stats, err := c.Clean(context.Background(), []scanner.Entry{
+		{Path: testFile, Size: 4},
+	})
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, stats.SuccessCount)
 
-	// File should still exist
-	_, err = os.Stat(testFile)
-	assert.NoError(t, err, "File should still exist after dry run")
+	_, statErr := os.Stat(testFile)
+	assert.NoError(t, statErr)
 }
 
 func TestCleaner_Clean_EmptyEntries(t *testing.T) {
 	c := cleaner.New()
-	ctx := context.Background()
-	stats, err := c.Clean(ctx, []scanner.Entry{})
+	stats, err := c.Clean(context.Background(), []scanner.Entry{})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, stats.TotalCount)
@@ -130,16 +75,61 @@ func TestCleaner_Clean_EmptyEntries(t *testing.T) {
 
 func TestCleaner_CleanSingle_ProtectedPath(t *testing.T) {
 	c := cleaner.New()
-	ctx := context.Background()
 
-	entry := scanner.Entry{
+	_, err := c.CleanSingle(context.Background(), scanner.Entry{
 		Path: "~/.ssh/id_rsa",
 		Size: 100,
-	}
+	})
 
-	_, err := c.CleanSingle(ctx, entry)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "protected path")
+}
+
+func TestCleaner_CleanSingle_RejectsSymlinkToProtectedPath(t *testing.T) {
+	tempDir := t.TempDir()
+	linkPath := filepath.Join(tempDir, "applications-link")
+	require.NoError(t, os.Symlink("/Applications", linkPath))
+
+	c := cleaner.New()
+	result, err := c.CleanSingle(context.Background(), scanner.Entry{
+		Path: linkPath,
+		Size: 1,
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "protected path")
+
+	info, statErr := os.Lstat(linkPath)
+	require.NoError(t, statErr)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink)
+}
+
+func TestCleaner_Clean_RejectsUnsafeBatchBeforeAnyMove(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	safeFile := filepath.Join(t.TempDir(), "safe.log")
+	require.NoError(t, os.WriteFile(safeFile, []byte("log"), 0o644))
+
+	linkPath := filepath.Join(t.TempDir(), "applications-link")
+	require.NoError(t, os.Symlink("/Applications", linkPath))
+
+	c := cleaner.New()
+	stats, err := c.Clean(context.Background(), []scanner.Entry{
+		{Path: safeFile, Size: 3},
+		{Path: linkPath, Size: 1},
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, stats)
+	assert.Contains(t, err.Error(), "protected path")
+
+	_, statErr := os.Stat(safeFile)
+	require.NoError(t, statErr)
+
+	_, trashErr := os.Stat(filepath.Join(homeDir, ".Trash"))
+	assert.ErrorIs(t, trashErr, os.ErrNotExist)
 }
 
 func TestCleanStats_Empty(t *testing.T) {

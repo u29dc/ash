@@ -1,9 +1,12 @@
 package safety_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"ash/internal/safety"
 )
@@ -168,4 +171,12 @@ func TestSanitizePath(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestIsSafePath_BlocksSymlinkIntoProtectedDirectory(t *testing.T) {
+	cacheDir := t.TempDir()
+	linkPath := filepath.Join(cacheDir, "applications-link")
+	require.NoError(t, os.Symlink("/Applications", linkPath))
+
+	assert.False(t, safety.IsSafePath(linkPath))
 }

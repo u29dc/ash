@@ -30,7 +30,6 @@ type CleanStats struct {
 // Cleaner handles the deletion of files and directories.
 type Cleaner struct {
 	dryRun      bool
-	useTrash    bool
 	parallelism int
 }
 
@@ -41,13 +40,6 @@ type Option func(*Cleaner)
 func WithDryRun(dryRun bool) Option {
 	return func(c *Cleaner) {
 		c.dryRun = dryRun
-	}
-}
-
-// WithTrash sets whether to move files to Trash instead of permanent deletion.
-func WithTrash(useTrash bool) Option {
-	return func(c *Cleaner) {
-		c.useTrash = useTrash
 	}
 }
 
@@ -62,7 +54,6 @@ func WithParallelism(n int) Option {
 func New(opts ...Option) *Cleaner {
 	c := &Cleaner{
 		dryRun:      false,
-		useTrash:    true, // Default to using Trash for safety
 		parallelism: 4,
 	}
 
@@ -126,11 +117,7 @@ func (c *Cleaner) Clean(ctx context.Context, entries []scanner.Entry) (*CleanSta
 					}
 					return
 				}
-				if c.useTrash {
-					err = MoveToTrash(e.Path)
-				} else {
-					err = permanentDelete(e.Path)
-				}
+				err = MoveToTrash(e.Path)
 			}
 
 			results <- CleanResult{
@@ -190,11 +177,7 @@ func (c *Cleaner) CleanSingle(ctx context.Context, entry scanner.Entry) (*CleanR
 				Size:    entry.Size,
 			}, errors.New("path became unsafe: " + entry.Path)
 		}
-		if c.useTrash {
-			err = MoveToTrash(entry.Path)
-		} else {
-			err = permanentDelete(entry.Path)
-		}
+		err = MoveToTrash(entry.Path)
 	}
 
 	return &CleanResult{
@@ -234,9 +217,4 @@ func (c *Cleaner) Preview(entries []scanner.Entry) (*CleanStats, error) {
 // IsDryRun returns whether the cleaner is in dry-run mode.
 func (c *Cleaner) IsDryRun() bool {
 	return c.dryRun
-}
-
-// UsesTrash returns whether the cleaner moves files to Trash.
-func (c *Cleaner) UsesTrash() bool {
-	return c.useTrash
 }
