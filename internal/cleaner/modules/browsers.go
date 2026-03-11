@@ -89,7 +89,10 @@ func (m *BrowsersModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 
 		size := info.Size()
 		if info.IsDir() && !isSymlink {
-			size = calcDirSize(basePath)
+			size, err = calcDirSizeWithContext(ctx, basePath)
+			if err != nil {
+				return entries, err
+			}
 		}
 
 		browserName := m.identifyBrowser(basePath)

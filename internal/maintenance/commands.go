@@ -7,6 +7,15 @@ import (
 	"time"
 )
 
+const (
+	sudoBin        = "/usr/bin/sudo"
+	dscacheutilBin = "/usr/bin/dscacheutil"
+	killallBin     = "/usr/bin/killall"
+	mdutilBin      = "/usr/bin/mdutil"
+	atsutilBin     = "/usr/bin/atsutil"
+	purgeBin       = "/usr/sbin/purge"
+)
+
 // Command represents a maintenance command.
 type Command struct {
 	Name         string
@@ -32,7 +41,7 @@ func GetCommands() []*Command {
 		{
 			Name:         "Flush DNS Cache",
 			Description:  "Clear the DNS resolver cache",
-			Cmd:          "dscacheutil",
+			Cmd:          dscacheutilBin,
 			Args:         []string{"-flushcache"},
 			RequiresSudo: false,
 			Useful:       true,
@@ -40,7 +49,7 @@ func GetCommands() []*Command {
 		{
 			Name:         "Restart mDNSResponder",
 			Description:  "Restart the DNS service",
-			Cmd:          "killall",
+			Cmd:          killallBin,
 			Args:         []string{"-HUP", "mDNSResponder"},
 			RequiresSudo: true,
 			Useful:       true,
@@ -48,7 +57,7 @@ func GetCommands() []*Command {
 		{
 			Name:         "Rebuild Spotlight Index",
 			Description:  "Reindex Spotlight search database",
-			Cmd:          "mdutil",
+			Cmd:          mdutilBin,
 			Args:         []string{"-E", "/"},
 			RequiresSudo: true,
 			Useful:       true,
@@ -64,7 +73,7 @@ func GetCommands() []*Command {
 		{
 			Name:         "Clear Font Cache",
 			Description:  "Remove cached font data",
-			Cmd:          "atsutil",
+			Cmd:          atsutilBin,
 			Args:         []string{"databases", "-remove"},
 			RequiresSudo: true,
 			Useful:       true,
@@ -72,7 +81,7 @@ func GetCommands() []*Command {
 		{
 			Name:         "Purge RAM",
 			Description:  "Free up inactive memory",
-			Cmd:          "purge",
+			Cmd:          purgeBin,
 			Args:         []string{},
 			RequiresSudo: true,
 			Useful:       false, // Limited benefit as noted in plan
@@ -90,7 +99,7 @@ func Run(ctx context.Context, cmd *Command) *CommandResult {
 	var execCmd *exec.Cmd
 	if cmd.RequiresSudo {
 		args := append([]string{cmd.Cmd}, cmd.Args...)
-		execCmd = exec.CommandContext(ctx, "sudo", args...)
+		execCmd = exec.CommandContext(ctx, sudoBin, args...)
 	} else {
 		execCmd = exec.CommandContext(ctx, cmd.Cmd, cmd.Args...)
 	}
@@ -135,19 +144,19 @@ func RunAll(ctx context.Context, sudoOnly bool) []*CommandResult {
 // FlushDNS flushes the DNS cache.
 func FlushDNS(ctx context.Context) error {
 	// First flush dscacheutil
-	cmd1 := exec.CommandContext(ctx, "dscacheutil", "-flushcache")
+	cmd1 := exec.CommandContext(ctx, dscacheutilBin, "-flushcache")
 	if err := cmd1.Run(); err != nil {
 		return err
 	}
 
 	// Then restart mDNSResponder
-	cmd2 := exec.CommandContext(ctx, "sudo", "killall", "-HUP", "mDNSResponder")
+	cmd2 := exec.CommandContext(ctx, sudoBin, killallBin, "-HUP", "mDNSResponder")
 	return cmd2.Run()
 }
 
 // RebuildSpotlight rebuilds the Spotlight index.
 func RebuildSpotlight(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "sudo", "mdutil", "-E", "/")
+	cmd := exec.CommandContext(ctx, sudoBin, mdutilBin, "-E", "/")
 	return cmd.Run()
 }
 
@@ -160,13 +169,13 @@ func RebuildLaunchServices(ctx context.Context) error {
 
 // ClearFontCache clears the font cache.
 func ClearFontCache(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "sudo", "atsutil", "databases", "-remove")
+	cmd := exec.CommandContext(ctx, sudoBin, atsutilBin, "databases", "-remove")
 	return cmd.Run()
 }
 
 // PurgeRAM frees up inactive memory.
 func PurgeRAM(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "sudo", "purge")
+	cmd := exec.CommandContext(ctx, sudoBin, purgeBin)
 	return cmd.Run()
 }
 

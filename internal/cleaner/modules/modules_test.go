@@ -1,6 +1,9 @@
 package modules_test
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -110,6 +113,7 @@ func TestLogsModule(t *testing.T) {
 	assert.False(t, mod.RequiresSudo())
 	assert.True(t, mod.IsEnabled())
 	assert.NotEmpty(t, mod.Paths())
+	assert.Contains(t, mod.Paths(), "/var/log")
 }
 
 func TestXcodeModule(t *testing.T) {
@@ -182,6 +186,70 @@ func TestModule_SetEnabled(t *testing.T) {
 
 	mod.SetEnabled(true)
 	assert.True(t, mod.IsEnabled())
+}
+
+func TestAppsModuleScanUsesFinderConfidenceAndSkipsInstalledApps(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	libraryDir := filepath.Join(homeDir, "Library")
+	require.NoError(t, os.MkdirAll(filepath.Join(libraryDir, "Preferences"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(libraryDir, "Application Support"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(libraryDir, "Group Containers"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(homeDir, "Applications", "Installed.app", "Contents"), 0o755))
+
+	installedPlist := `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.example.installed</string></dict></plist>`
+	require.NoError(t, os.WriteFile(
+		filepath.Join(homeDir, "Applications", "Installed.app", "Contents", "Info.plist"),
+		[]byte(installedPlist),
+		0o644,
+	))
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(libraryDir, "Preferences", "com.example.missing.plist"),
+		[]byte("prefs"),
+		0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(libraryDir, "Preferences", "com.example.installed.plist"),
+		[]byte("prefs"),
+		0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(libraryDir, "Application Support", "com.example.support"),
+		[]byte("support"),
+		0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(libraryDir, "Group Containers", "group.com.example.shared"),
+		[]byte("shared"),
+		0o644,
+	))
+
+	mod, err := modules.NewAppsModule()
+	require.NoError(t, err)
+
+	entries, err := mod.Scan(context.Background())
+	require.NoError(t, err)
+
+	byPath := make(map[string]scanner.Entry, len(entries))
+	for _, entry := range entries {
+		byPath[entry.Path] = entry
+	}
+
+	prefsPath := filepath.Join(libraryDir, "Preferences", "com.example.missing.plist")
+	appSupportPath := filepath.Join(libraryDir, "Application Support", "com.example.support")
+	groupPath := filepath.Join(libraryDir, "Group Containers", "group.com.example.shared")
+	installedPath := filepath.Join(libraryDir, "Preferences", "com.example.installed.plist")
+
+	require.Contains(t, byPath, prefsPath)
+	assert.Equal(t, scanner.RiskCaution, byPath[prefsPath].Risk)
+	require.Contains(t, byPath, appSupportPath)
+	assert.Equal(t, scanner.RiskDangerous, byPath[appSupportPath].Risk)
+	require.Contains(t, byPath, groupPath)
+	assert.Equal(t, scanner.RiskDangerous, byPath[groupPath].Risk)
+	assert.NotContains(t, byPath, installedPath)
 }
 
 func contains(s, substr string) bool {

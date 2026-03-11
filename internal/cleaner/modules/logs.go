@@ -25,7 +25,7 @@ func NewLogsModule() (*LogsModule, error) {
 	m := &LogsModule{
 		BaseModule: BaseModule{
 			name:         "Logs",
-			description:  "Application logs in ~/Library/Logs",
+			description:  "Application and system logs",
 			category:     scanner.CategoryLogs,
 			riskLevel:    scanner.RiskSafe,
 			requiresSudo: false,
@@ -36,6 +36,7 @@ func NewLogsModule() (*LogsModule, error) {
 
 	m.paths = []string{
 		filepath.Join(homeDir, "Library", "Logs"),
+		"/var/log",
 	}
 
 	m.patterns = []string{
@@ -87,7 +88,10 @@ func (m *LogsModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 
 			size := info.Size()
 			if item.IsDir() && !isSymlink {
-				size = calcDirSize(path)
+				size, err = calcDirSizeWithContext(ctx, path)
+				if err != nil {
+					return entries, err
+				}
 			}
 
 			entries = append(entries, scanner.Entry{

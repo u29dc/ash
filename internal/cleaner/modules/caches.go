@@ -2,6 +2,7 @@ package modules
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,7 +113,10 @@ func (m *CachesModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 
 			size := info.Size()
 			if item.IsDir() && !isSymlink {
-				size = calcDirSize(path)
+				size, err = calcDirSizeWithContext(ctx, path)
+				if err != nil {
+					return entries, err
+				}
 			}
 
 			entries = append(entries, scanner.Entry{
@@ -132,16 +136,21 @@ func (m *CachesModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 	return entries, nil
 }
 
-func calcDirSize(path string) int64 {
+func calcDirSizeWithContext(ctx context.Context, path string) (int64, error) {
 	var size atomic.Int64
 
 	conf := fastwalk.Config{
 		Follow: false,
 	}
 
-	_ = fastwalk.Walk(&conf, path, func(_ string, d os.DirEntry, err error) error {
-		if err != nil {
+	err := fastwalk.Walk(&conf, path, func(_ string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
 			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 		if !d.IsDir() {
 			if info, err := d.Info(); err == nil {
@@ -151,5 +160,19 @@ func calcDirSize(path string) int64 {
 		return nil
 	})
 
-	return size.Load()
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return size.Load(), err
+	}
+	if ctx.Err() != nil {
+		return size.Load(), ctx.Err()
+	}
+	return size.Load(), nil
+}
+
+func calcDirSize(path string) int64 {
+	size, err := calcDirSizeWithContext(context.Background(), path)
+	if err != nil {
+		return size
+	}
+	return size
 }

@@ -11,6 +11,16 @@ import (
 	"ash/internal/scanner"
 )
 
+var brewBinaryCandidates = []string{
+	"/opt/homebrew/bin/brew",
+	"/usr/local/bin/brew",
+}
+
+const (
+	homebrewOptBrew   = "/opt/homebrew/bin/brew"
+	homebrewLocalBrew = "/usr/local/bin/brew"
+)
+
 // HomebrewModule handles Homebrew cache cleanup.
 type HomebrewModule struct {
 	BaseModule
@@ -83,7 +93,10 @@ func (m *HomebrewModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 
 			size := info.Size()
 			if item.IsDir() && !isSymlink {
-				size = calcDirSize(path)
+				size, err = calcDirSizeWithContext(ctx, path)
+				if err != nil {
+					return entries, err
+				}
 			}
 
 			entries = append(entries, scanner.Entry{
@@ -105,8 +118,8 @@ func (m *HomebrewModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 
 // IsHomebrewInstalled checks if Homebrew is installed.
 func IsHomebrewInstalled() bool {
-	_, err := exec.LookPath("brew")
-	return err == nil
+	_, ok := brewBinaryPath()
+	return ok
 }
 
 // GetHomebrewCacheSize returns the total size of Homebrew caches.
@@ -122,11 +135,11 @@ func GetHomebrewCacheSize() (int64, error) {
 
 // GetOutdatedPackages returns a list of outdated Homebrew packages.
 func GetOutdatedPackages() ([]string, error) {
-	if !IsHomebrewInstalled() {
+	cmd, ok := brewOutdatedCommand()
+	if !ok {
 		return nil, nil
 	}
 
-	cmd := exec.Command("brew", "outdated", "--quiet")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -145,15 +158,58 @@ func GetOutdatedPackages() ([]string, error) {
 
 // CleanupHomebrew runs brew cleanup to remove old versions.
 func CleanupHomebrew(dryRun bool) error {
-	if !IsHomebrewInstalled() {
+	cmd, ok := brewCleanupCommand(dryRun)
+	if !ok {
 		return nil
 	}
+	return cmd.Run()
+}
 
-	args := []string{"cleanup"}
-	if dryRun {
-		args = append(args, "--dry-run")
+func brewBinaryPath() (string, bool) {
+	for _, candidate := range brewBinaryCandidates {
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		return candidate, true
+	}
+	return "", false
+}
+
+func brewOutdatedCommand() (*exec.Cmd, bool) {
+	brewBinary, ok := brewBinaryPath()
+	if !ok {
+		return nil, false
 	}
 
-	cmd := exec.Command("brew", args...)
-	return cmd.Run()
+	switch brewBinary {
+	case homebrewOptBrew:
+		return exec.Command(homebrewOptBrew, "outdated", "--quiet"), true
+	case homebrewLocalBrew:
+		return exec.Command(homebrewLocalBrew, "outdated", "--quiet"), true
+	default:
+		return nil, false
+	}
+}
+
+func brewCleanupCommand(dryRun bool) (*exec.Cmd, bool) {
+	brewBinary, ok := brewBinaryPath()
+	if !ok {
+		return nil, false
+	}
+
+	switch brewBinary {
+	case homebrewOptBrew:
+		if dryRun {
+			return exec.Command(homebrewOptBrew, "cleanup", "--dry-run"), true
+		}
+		return exec.Command(homebrewOptBrew, "cleanup"), true
+	case homebrewLocalBrew:
+		if dryRun {
+			return exec.Command(homebrewLocalBrew, "cleanup", "--dry-run"), true
+		}
+		return exec.Command(homebrewLocalBrew, "cleanup"), true
+	default:
+		return nil, false
+	}
 }

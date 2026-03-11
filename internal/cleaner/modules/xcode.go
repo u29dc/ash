@@ -87,7 +87,10 @@ func (m *XcodeModule) Scan(ctx context.Context) ([]scanner.Entry, error) {
 
 			size := info.Size()
 			if item.IsDir() && !isSymlink {
-				size = calcDirSize(path)
+				size, err = calcDirSizeWithContext(ctx, path)
+				if err != nil {
+					return entries, err
+				}
 			}
 
 			// Determine risk level based on path
