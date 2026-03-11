@@ -42,11 +42,11 @@
 
 **Development:**
 - `bun run dev` - Run development build
-- `bun run ash` - Run built binary from `bin/ash`
+- `bun run ash` - Run built binary from `${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash`
 
 **Build:**
-- `bun run build` - Build binary to `bin/ash`
-- `bun run build:release` - Release build (CGO_ENABLED=0, trimpath)
+- `bun run build` - Build binary to `${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash`
+- `bun run build:release` - Release build to `${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash` (CGO_ENABLED=0, trimpath)
 
 **Test:**
 - `bun run test` - Run tests with race detector
