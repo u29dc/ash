@@ -1,4 +1,4 @@
-.PHONY: all build test lint fmt check clean install dev
+.PHONY: all build build-release test test-short test-verbose lint fmt vet check clean install uninstall dev deps coverage coverage-check help
 
 # Build variables
 BINARY := ash
@@ -39,7 +39,7 @@ vet:
 	go vet ./...
 
 # Quality gate
-check: fmt vet lint test
+check: fmt vet lint test build
 	@echo "All checks passed"
 
 clean:
@@ -50,7 +50,7 @@ install: build
 	cp bin/$(BINARY) "$${ASH_HOME:-$${TOOLS_HOME:-$$HOME/.tools}/ash}/$(BINARY)"
 
 uninstall:
-	rm -f /usr/local/bin/$(BINARY)
+	rm -f "$${ASH_HOME:-$${TOOLS_HOME:-$$HOME/.tools}/ash}/$(BINARY)"
 
 # Development
 dev:

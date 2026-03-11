@@ -16,11 +16,9 @@
 │   ├── config/            # User configuration
 │   ├── maintenance/       # System maintenance commands
 │   ├── safety/            # Path guards and permissions
-│   ├── scanner/           # Parallel directory scanner
+│   ├── scanner/           # Shared scanner types, analyzer, paths, orphan finder
 │   ├── testutil/          # Test fixtures and helpers
-│   └── tui/               # UI components and views
-│       ├── components/
-│       └── views/
+│   └── tui/               # Shared TUI theme and styles
 ├── pkg/plist/             # macOS plist utilities
 ├── Makefile               # Make targets for build/test
 ├── package.json           # Bun script runner
@@ -56,7 +54,7 @@
 - `bun run test:coverage` - Run tests and generate coverage report
 
 **Quality:**
-- `bun run util:check` - Format, lint, types, test (quality gate)
+- `bun run util:check` - Format, lint, types, test, build (quality gate)
 - `bun run util:format` - Format code
 - `bun run util:lint` - Run golangci-lint
 - `bun run util:types` - Run go vet
@@ -68,16 +66,16 @@
 **Make targets (alternative):**
 - `make check` - Run all quality checks
 - `make coverage` - Generate coverage HTML report
-- `make install` - Install binary to /usr/local/bin
+- `make install` - Install binary to `${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}`
 
 ## 5. Architecture
 
-- **Scanner** (`internal/scanner/`): Parallel directory traversal using fastwalk, supports categories (caches, logs, xcode, homebrew, browsers, app_data), risk assessment (safe/caution/dangerous), symlink detection and target resolution
+- **Scanner** (`internal/scanner/`): Shared scanner types, analyzers, path config, and the confidence-based orphan finder used by deep scan
 - **Cleaner** (`internal/cleaner/`): Move files to Trash via direct filesystem operations (never permanent delete), parallel deletion with semaphore, safety validation before all operations
 - **Modules** (`internal/cleaner/modules/`): Pluggable cleanup modules - `CachesModule`, `LogsModule`, `XcodeModule`, `HomebrewModule`, `BrowsersModule`, `AppsModule`
 - **Safety** (`internal/safety/`): Protected paths (.ssh, keychains, .git, /System, /Library), bundle ID allowlist, permission checks
-- **TUI** (`internal/tui/`): Grayscale design system, Bubble Tea views (home, scanning, results, confirm, cleaning, maintenance)
-- **App** (`internal/app/`): State machine with views, key bindings, scan/clean commands
+- **TUI** (`internal/tui/`): Shared grayscale theme and style helpers
+- **App** (`internal/app/`): Bubble Tea state machine, scan orchestration, result/error surfacing, confirm flow, and cleanup/maintenance commands
 - **Testutil** (`internal/testutil/`): Test fixtures and helper functions for unit tests
 
 ## 6. Cleanup Targets
@@ -85,9 +83,9 @@
 - **Caches**: `~/Library/Caches/*` (excludes Homebrew, browsers)
 - **Logs**: `~/Library/Logs/*`, `/var/log/*` (user-readable)
 - **Xcode**: `DerivedData`, `Archives`, `iOS DeviceSupport`
-- **Homebrew**: `$(brew --prefix)/Caches`, old package versions
+- **Homebrew**: `~/Library/Caches/Homebrew` cache data; `brew cleanup` helpers exist for old package versions
 - **Browsers**: Safari, Chrome, Firefox, Brave cache directories
-- **App Leftovers**: Orphaned `Application Support`, `Preferences`, `Containers` for uninstalled apps
+- **App Leftovers**: Confidence-based `Application Support`, `Preferences`, `Containers`, and `Group Containers` leftovers for uninstalled apps
 
 ## 7. Safety Guards
 
@@ -98,7 +96,7 @@
 
 ## 8. Quality
 
-- Quality gate: `bun run util:check` (format, lint, types, test)
+- Quality gate: `bun run util:check` (format, lint, types, test, build)
 - golangci-lint v2 with strict rules: errcheck, govet, staticcheck, unused, exhaustive, gosec, revive
 - Tests colocated with source files (`*_test.go`), test helpers in `internal/testutil/`
 - Commits: Conventional Commits format `type(scope): description`

@@ -10,10 +10,10 @@
   "scripts": {
     "dev----------------------------------": "",
     "dev": "go run ./cmd/ash",
-    "ash": "\"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash\"",
+    "ash": "./bin/ash",
     "build--------------------------------": "",
-    "build": "go build -ldflags \"-s -w\" -o \"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash\" ./cmd/ash",
-    "build:release": "CGO_ENABLED=0 go build -ldflags \"-s -w\" -trimpath -o \"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash\" ./cmd/ash",
+    "build": "mkdir -p bin && VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev) && COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) && BUILD_TIME=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\") && go build -ldflags \"-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildTime=$BUILD_TIME\" -o bin/ash ./cmd/ash",
+    "build:release": "mkdir -p bin && VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev) && COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) && BUILD_TIME=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\") && CGO_ENABLED=0 go build -ldflags \"-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildTime=$BUILD_TIME\" -trimpath -o bin/ash ./cmd/ash",
     "test---------------------------------": "",
     "test": "go test -race ./...",
     "test:verbose": "go test -v -race ./...",
@@ -23,7 +23,7 @@
     "util:lint": "golangci-lint run ./...",
     "util:types": "go vet ./...",
     "util:clean": "rm -rf bin/ coverage.out coverage.html",
-    "util:check": "STATUS=0; bun run util:format || STATUS=1; bun run util:lint || STATUS=1; bun run util:types || STATUS=1; bun run test || STATUS=1; exit $STATUS",
+    "util:check": "STATUS=0; bun run util:format || STATUS=1; bun run util:lint || STATUS=1; bun run util:types || STATUS=1; bun run test || STATUS=1; bun run build || STATUS=1; exit $STATUS",
     "misc---------------------------------": "",
     "deps": "go mod download && go mod tidy"
   },
