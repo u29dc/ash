@@ -1,28 +1,12 @@
-# Binaries
-bin/
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-/ash
-
-# Test binary
-*.test
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS
+node_modules
+target
+**/target
+dist
 .DS_Store
-Thumbs.db
-
-# Build
-dist/
-
-# Debug
-__debug_bin*
+.tmp
+.tmp*
+tmp
+temp
+coverage
+*.log
+.husky/_

@@ -1,31 +1,34 @@
 {
-  "name": "ash",
-  "version": "0.1.0",
-  "type": "module",
-  "private": true,
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/u29dc/ash"
-  },
-  "scripts": {
-    "dev----------------------------------": "",
-    "dev": "go run ./cmd/ash",
-    "ash": "\"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}/ash\"",
-    "build--------------------------------": "",
-    "build": "OUT_DIR=\"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}\" && mkdir -p \"$OUT_DIR\" && VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev) && COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) && BUILD_TIME=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\") && go build -ldflags \"-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildTime=$BUILD_TIME\" -o \"$OUT_DIR/ash\" ./cmd/ash",
-    "build:release": "OUT_DIR=\"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}\" && mkdir -p \"$OUT_DIR\" && VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev) && COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) && BUILD_TIME=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\") && CGO_ENABLED=0 go build -ldflags \"-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildTime=$BUILD_TIME\" -trimpath -o \"$OUT_DIR/ash\" ./cmd/ash",
-    "test---------------------------------": "",
-    "test": "go test -race ./...",
-    "test:verbose": "go test -v -race ./...",
-    "test:coverage": "go test -race -coverprofile=coverage.out ./... && go tool cover -html=coverage.out -o coverage.html",
-    "check--------------------------------": "",
-    "util:format": "go fmt ./...",
-    "util:lint": "golangci-lint run ./...",
-    "util:types": "go vet ./...",
-    "util:clean": "rm -rf bin/ coverage.out coverage.html",
-    "util:check": "STATUS=0; bun run util:format || STATUS=1; bun run util:lint || STATUS=1; bun run util:types || STATUS=1; bun run test || STATUS=1; bun run build || STATUS=1; exit $STATUS",
-    "misc---------------------------------": "",
-    "deps": "go mod download && go mod tidy"
-  },
-  "devDependencies": {}
+	"name": "ash",
+	"version": "0.1.0",
+	"type": "module",
+	"private": true,
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/u29dc/ash.git"
+	},
+	"scripts": {
+		"prepare": "husky",
+		"dev": "bun run ash:dev",
+		"ash:dev": "cargo run -p ash-cli --",
+		"build": "cargo build --workspace --release && OUT_DIR=\"${ASH_HOME:-${TOOLS_HOME:-$HOME/.tools}/ash}\" && mkdir -p \"$OUT_DIR\" && cp target/release/ash \"$OUT_DIR/ash\"",
+		"util:format": "bunx @biomejs/biome check --formatter-enabled=true --linter-enabled=false --assist-enabled=false AGENTS.md README.md biome.json commitlint.config.js lint-staged.config.js package.json scripts .cargo && cargo fmt --all --check",
+		"util:lint": "bunx @biomejs/biome lint AGENTS.md README.md biome.json commitlint.config.js lint-staged.config.js package.json scripts .cargo --max-diagnostics 500 && cargo clippy --workspace --all-targets --all-features -- -D warnings",
+		"util:types": "cargo check --workspace",
+		"util:test": "cargo test --workspace",
+		"util:build": "cargo build --workspace",
+		"util:bench:fixtures": "bash scripts/bench-fixtures.sh",
+		"util:bench:scan:safe": "bash scripts/bench-scan-safe.sh",
+		"util:bench:scan:full": "bash scripts/bench-scan-full.sh",
+		"util:bench:smoke": "bash scripts/bench-smoke.sh",
+		"util:check": "STATUS=0; bun run util:format || STATUS=1; bun run util:lint || STATUS=1; bun run util:types || STATUS=1; bun run util:test || STATUS=1; bun run util:bench:smoke || STATUS=1; bun run build || STATUS=1; exit $STATUS",
+		"clean": "cargo clean"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.10",
+		"@commitlint/cli": "^20.5.0",
+		"@commitlint/config-conventional": "^20.5.0",
+		"husky": "^9.1.7",
+		"lint-staged": "^16.4.0"
+	}
 }
