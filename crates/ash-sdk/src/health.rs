@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use crate::config::{load_config, validate_config};
@@ -185,7 +186,9 @@ fn command_on_path(name: &str) -> bool {
 }
 
 fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
+    path.metadata()
+        .map(|metadata| metadata.is_file() && (metadata.permissions().mode() & 0o111) != 0)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

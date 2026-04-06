@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -88,6 +89,7 @@ fn ensure_fallback_trash_dir(paths: &ResolvedPaths) -> Result<PathBuf> {
             "replace the symlinked trash path with a real directory and retry",
         ));
     }
+    fs::set_permissions(&trash_dir, fs::Permissions::from_mode(0o700))?;
     Ok(trash_dir)
 }
 
@@ -109,11 +111,37 @@ fn fallback_trash_dir_ready(paths: &ResolvedPaths) -> Result<()> {
                     "replace the trash path with a real directory and retry",
                 ));
             }
+            if !path_is_writable(&trash_dir) {
+                return Err(AshError::new(
+                    ErrorCode::SafetyBlocked,
+                    format!("trash path is not writable: {}", trash_dir.display()),
+                    "ensure the trash directory is writable and retry",
+                ));
+            }
             Ok(())
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if path_is_writable(&paths.user_home) {
+                Ok(())
+            } else {
+                Err(AshError::new(
+                    ErrorCode::SafetyBlocked,
+                    format!(
+                        "trash parent is not writable: {}",
+                        paths.user_home.display()
+                    ),
+                    "ensure the home directory is writable and retry",
+                ))
+            }
+        }
         Err(error) => Err(error.into()),
     }
+}
+
+fn path_is_writable(path: &Path) -> bool {
+    path.metadata()
+        .map(|metadata| (metadata.permissions().mode() & 0o222) != 0)
+        .unwrap_or(false)
 }
 
 fn unique_fallback_destination(trash_dir: &Path, base_name: &std::ffi::OsStr) -> PathBuf {

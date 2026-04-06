@@ -11,9 +11,14 @@ use walkdir::WalkDir;
 
 use crate::config::load_config;
 use crate::error::{AshError, ErrorCode, Result};
-use crate::inventory::{AppRecord, find_app_by_bundle_id, load_inventory, read_app_groups};
+use crate::inventory::{
+    AppRecord, extract_bundle_id, find_app_by_bundle_id, find_unique_app_by_name, load_inventory,
+    normalize_name, read_app_groups,
+};
 use crate::paths::ResolvedPaths;
-use crate::policy::{CandidateClass, Evidence, RiskLevel, is_protected_absolute_path};
+use crate::policy::{
+    CandidateClass, Evidence, RiskLevel, is_protected_absolute_path, is_safe_tool_cache_name,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -361,7 +366,7 @@ fn scan_temp(paths: &ResolvedPaths, inventory: &[AppRecord]) -> Result<Vec<Clean
         {
             continue;
         }
-        let owner = installed_owner_for_name(&name, inventory);
+        let owner = installed_owner_for_generic_name(&name, inventory);
         let blocked_reason = generic_temp_block_reason(&name, &path, owner.as_ref());
         let size_bytes = calculate_size(&path)?;
         candidates.push(build_candidate(CandidateDraft {
@@ -443,7 +448,7 @@ fn scan_caches(paths: &ResolvedPaths, inventory: &[AppRecord]) -> Result<Vec<Cle
         let name = entry.file_name().to_string_lossy().to_string();
         let size_bytes = calculate_size(&path)?;
         let risk = risk_for_cache_like_name(&name, CandidateClass::UserCache);
-        let owner = installed_owner_for_name(&name, inventory);
+        let owner = installed_owner_for_cache_name(&name, inventory);
         let blocked_reason = generic_cache_block_reason(&name, &path, owner.as_ref());
         candidates.push(build_candidate(CandidateDraft {
             canonical_path: canonical,
@@ -557,6 +562,10 @@ fn browser_paths(paths: &ResolvedPaths) -> Vec<BrowserRoot> {
             bundle_id: "com.microsoft.edgemac",
         },
         BrowserRoot {
+            path: cache.join("Microsoft Edge"),
+            bundle_id: "com.microsoft.edgemac",
+        },
+        BrowserRoot {
             path: cache.join("com.operasoftware.Opera"),
             bundle_id: "com.operasoftware.Opera",
         },
@@ -634,11 +643,10 @@ fn scan_xcode(paths: &ResolvedPaths, profile: ScanProfile) -> Result<Vec<Cleanup
 
 fn scan_app_state(
     paths: &ResolvedPaths,
-    inventory: &[AppRecord],
+    _inventory: &[AppRecord],
     target_app: Option<&TargetApp>,
 ) -> Result<Vec<CleanupCandidate>> {
     let mut candidates = Vec::new();
-    let home = paths.user_home.display().to_string();
     let locations = vec![
         (
             paths.user_home.join("Library").join("Application Support"),
@@ -736,6 +744,27 @@ fn scan_app_state(
                         evidence: vec![
                             Evidence::new("bundleId", target.bundle_id.clone()),
                             Evidence::new("targetedApp", target.selector.clone()),
+                            Evidence::new("matchKind", "bundleId"),
+                        ],
+                        running_processes: running.clone(),
+                        eligible: blocked_reason.is_none(),
+                        blocked_reason,
+                    }));
+                    continue;
+                }
+                if exact_target_name_match(target, &name) {
+                    let size_bytes = calculate_size(&path)?;
+                    let blocked_reason = targeted_leftover_block_reason(target, &running);
+                    candidates.push(build_candidate(CandidateDraft {
+                        canonical_path: canonical_string(&path),
+                        class,
+                        risk: class.default_risk(),
+                        size_bytes,
+                        owner_status: OwnerStatus::Exclusive,
+                        evidence: vec![
+                            Evidence::new("bundleId", target.bundle_id.clone()),
+                            Evidence::new("targetedApp", target.selector.clone()),
+                            Evidence::new("matchKind", "exactName"),
                         ],
                         running_processes: running.clone(),
                         eligible: blocked_reason.is_none(),
@@ -747,54 +776,6 @@ fn scan_app_state(
         return Ok(candidates);
     }
 
-    for (base, class) in locations {
-        if class == CandidateClass::GroupContainer {
-            continue;
-        }
-        let Ok(entries) = fs::read_dir(&base) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_symlink_safe() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            let Some(bundle_id) = extract_bundle_id(&name) else {
-                continue;
-            };
-            if bundle_id.starts_with("com.apple.") {
-                continue;
-            }
-            if installed_owner_for_bundle_id(&bundle_id, inventory).is_some() {
-                continue;
-            }
-            let canonical = canonical_string(&path);
-            if is_protected_absolute_path(&canonical, &home) {
-                continue;
-            }
-            let size_bytes = calculate_size(&path)?;
-            candidates.push(build_candidate(CandidateDraft {
-                canonical_path: canonical,
-                class,
-                risk: class.default_risk(),
-                size_bytes,
-                owner_status: OwnerStatus::UninstalledApp,
-                evidence: vec![
-                    Evidence::new("bundleId", bundle_id),
-                    Evidence::new(
-                        "installedStatus",
-                        "no installed app with this bundle id was found",
-                    ),
-                ],
-                running_processes: Vec::new(),
-                eligible: false,
-                blocked_reason: Some(
-                    "stateful app cleanup requires a targeted app plan in v1".to_string(),
-                ),
-            }));
-        }
-    }
     Ok(candidates)
 }
 
@@ -817,8 +798,7 @@ fn targeted_state_candidate(
 
     let exact_bundle_match =
         extract_bundle_id(name).is_some_and(|bundle_id| bundle_id == target.bundle_id);
-    let exact_name_match = normalize(name) == normalize(&target.display_name)
-        || normalize(name) == normalize(&target.name);
+    let exact_name_match = exact_target_name_match(target, name);
     let matched = exact_bundle_match || exact_name_match;
     if !matched {
         return Ok(None);
@@ -1045,9 +1025,14 @@ fn min_age_block_reason(path: &Path, min_age_hours: i64, label: &str) -> Option<
     None
 }
 
-fn installed_owner_for_name(name: &str, inventory: &[AppRecord]) -> Option<AppRecord> {
+fn installed_owner_for_generic_name(name: &str, inventory: &[AppRecord]) -> Option<AppRecord> {
     extract_bundle_id(name)
         .and_then(|bundle_id| installed_owner_for_bundle_id(&bundle_id, inventory))
+        .or_else(|| find_unique_app_by_name(inventory, name))
+}
+
+fn installed_owner_for_cache_name(name: &str, inventory: &[AppRecord]) -> Option<AppRecord> {
+    installed_owner_for_generic_name(name, inventory)
 }
 
 fn installed_owner_for_bundle_id(bundle_id: &str, inventory: &[AppRecord]) -> Option<AppRecord> {
@@ -1105,6 +1090,12 @@ fn generic_cache_block_reason(
             owner.bundle_id
         ));
     }
+    if !is_safe_tool_cache_name(name) {
+        return Some(
+            "generic cache cleanup is blocked unless the cache is explicitly classified as safe"
+                .to_string(),
+        );
+    }
     min_age_block_reason(path, CACHE_MIN_AGE_HOURS, "cache")
 }
 
@@ -1137,14 +1128,9 @@ fn targeted_leftover_block_reason(
     None
 }
 
-fn normalize(value: &str) -> String {
-    value
-        .trim()
-        .to_ascii_lowercase()
-        .replace(['-', '_', '.'], " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+fn exact_target_name_match(target: &TargetApp, value: &str) -> bool {
+    normalize_name(value) == normalize_name(&target.display_name)
+        || normalize_name(value) == normalize_name(&target.name)
 }
 
 fn detect_running_processes(app_path: &Path) -> Vec<RunningProcess> {
@@ -1194,74 +1180,6 @@ fn target_running_processes(target: &TargetApp) -> Vec<RunningProcess> {
         .as_ref()
         .map(|path| detect_running_processes(Path::new(path)))
         .unwrap_or_default()
-}
-
-fn extract_bundle_id(name: &str) -> Option<String> {
-    let trimmed = strip_known_suffixes(name);
-    if trimmed.starts_with("group.") {
-        let candidate = trimmed.trim_start_matches("group.");
-        if looks_like_bundle_id(candidate) {
-            return Some(candidate.to_string());
-        }
-    }
-
-    let parts = trimmed.split('.').collect::<Vec<_>>();
-    if parts.len() >= 4 && looks_like_team_id(parts[0]) {
-        if parts[1] == "groups" {
-            let candidate = parts[2..].join(".");
-            if looks_like_bundle_id(&candidate) {
-                return Some(candidate);
-            }
-        }
-        let candidate = parts[1..].join(".");
-        if looks_like_bundle_id(&candidate) {
-            return Some(candidate);
-        }
-    }
-
-    if looks_like_bundle_id(trimmed) {
-        return Some(trimmed.to_string());
-    }
-    for index in 1..parts.len() {
-        let candidate = parts[index..].join(".");
-        if looks_like_bundle_id(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn strip_known_suffixes(name: &str) -> &str {
-    for suffix in [".plist", ".savedstate", ".savedState", ".binarycookies"] {
-        if let Some(value) = name.strip_suffix(suffix) {
-            return value;
-        }
-    }
-    name
-}
-
-fn looks_like_bundle_id(value: &str) -> bool {
-    let parts = value.split('.').collect::<Vec<_>>();
-    if parts.len() < 3
-        || parts
-            .first()
-            .is_none_or(|first| first.to_ascii_lowercase() != *first)
-    {
-        return false;
-    }
-    parts.iter().all(|part| {
-        !part.is_empty()
-            && part.chars().all(|character| {
-                character.is_ascii_alphanumeric() || character == '-' || character == '_'
-            })
-    })
-}
-
-fn looks_like_team_id(value: &str) -> bool {
-    value.len() >= 4
-        && value
-            .chars()
-            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit())
 }
 
 fn derive_display_name(bundle_id: &str) -> String {
@@ -1577,5 +1495,91 @@ mod tests {
         let candidate = plan.candidates.first().expect("temp candidate");
         assert!(!candidate.eligible);
         assert_eq!(candidate.class, CandidateClass::TempPath);
+    }
+
+    #[test]
+    fn targeted_app_cache_leftovers_match_exact_app_names() {
+        let temp = TempDir::new().expect("tempdir");
+        let home = temp.path();
+        fs::create_dir_all(home.join("Library/Caches/Dia")).expect("cache dir");
+        fs::write(home.join("Library/Caches/Dia/blob"), "cache").expect("cache file");
+
+        let paths = ResolvedPaths::for_test_home(home);
+        let plan = scan(
+            &paths,
+            ScanOptions {
+                app_target: Some("company.thebrowser.dia".to_string()),
+                profile: ScanProfile::Full,
+                scopes: vec![Scope::Apps],
+            },
+        )
+        .expect("targeted cache scan");
+
+        let candidate = plan
+            .candidates
+            .iter()
+            .find(|candidate| candidate.class == CandidateClass::AppCacheLeftover)
+            .expect("cache leftover candidate");
+        assert!(candidate.eligible);
+    }
+
+    #[test]
+    fn generic_unknown_cache_is_blocked_without_safe_classification() {
+        let temp = TempDir::new().expect("tempdir");
+        let home = temp.path();
+        fs::create_dir_all(home.join("Library/Caches/Adobe")).expect("cache dir");
+        fs::write(home.join("Library/Caches/Adobe/blob"), "cache").expect("cache file");
+
+        let paths = ResolvedPaths::for_test_home(home);
+        let plan = scan(
+            &paths,
+            ScanOptions {
+                app_target: None,
+                profile: ScanProfile::Safe,
+                scopes: vec![Scope::Caches],
+            },
+        )
+        .expect("cache scan");
+
+        let candidate = plan.candidates.first().expect("cache candidate");
+        assert!(!candidate.eligible);
+        assert_eq!(candidate.class, CandidateClass::UserCache);
+    }
+
+    #[test]
+    fn vendor_ambiguous_app_state_is_suppressed_in_generic_full_scans() {
+        let temp = TempDir::new().expect("tempdir");
+        let home = temp.path();
+        let app_dir = home.join("Applications/Word.app/Contents");
+        fs::create_dir_all(&app_dir).expect("app dir");
+        fs::write(
+            app_dir.join("Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.microsoft.Word</string>
+<key>CFBundleName</key><string>Word</string>
+</dict></plist>"#,
+        )
+        .expect("plist");
+        fs::create_dir_all(home.join("Library/Preferences")).expect("prefs dir");
+        fs::write(
+            home.join("Library/Preferences/com.microsoft.office.plist"),
+            "plist",
+        )
+        .expect("prefs");
+
+        let paths = ResolvedPaths::for_test_home(home);
+        let plan = scan(
+            &paths,
+            ScanOptions {
+                app_target: None,
+                profile: ScanProfile::Full,
+                scopes: vec![Scope::Apps],
+            },
+        )
+        .expect("full scan");
+
+        assert!(plan.candidates.is_empty());
     }
 }

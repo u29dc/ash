@@ -154,9 +154,40 @@ pub fn is_protected_absolute_path(path: &str, home: &str) -> bool {
     })
 }
 
+pub fn is_safe_tool_cache_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "argmax-sdk-swift"
+            | "bun"
+            | "cargo"
+            | "claude-cli-nodejs"
+            | "esbuild"
+            | "go-build"
+            | "goimports"
+            | "golangci-lint"
+            | "ms-playwright"
+            | "node-gyp"
+            | "npm"
+            | "org.swift.swiftpm"
+            | "pip"
+            | "pnpm"
+            | "rust-analyzer"
+            | "rustup"
+            | "ruff"
+            | "svelte-check-rs"
+            | "swiftpm"
+            | "turbo"
+            | "typescript"
+            | "uv"
+            | "vite"
+            | "yarn"
+            | "zig"
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CandidateClass, RiskLevel, is_protected_absolute_path};
+    use super::{CandidateClass, RiskLevel, is_protected_absolute_path, is_safe_tool_cache_name};
 
     #[test]
     fn risk_order_allows_expected_levels() {
@@ -193,5 +224,12 @@ mod tests {
             "/Users/example/Library/Caches/com.example.app",
             home
         ));
+    }
+
+    #[test]
+    fn safe_tool_cache_allowlist_matches_expected_names() {
+        assert!(is_safe_tool_cache_name("bun"));
+        assert!(is_safe_tool_cache_name("org.swift.swiftpm"));
+        assert!(!is_safe_tool_cache_name("Adobe"));
     }
 }

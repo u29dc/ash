@@ -120,11 +120,8 @@ fn build_inventory(paths: &ResolvedPaths, config: &AppConfig) -> Result<Vec<AppR
                 }
                 continue;
             }
-            if entry.file_type().is_dir()
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+            if is_app_bundle_candidate(entry.path(), entry.file_type().is_dir())
+                || is_app_bundle_symlink(entry.path(), entry.file_type().is_symlink())
             {
                 let path = entry.path().to_path_buf();
                 if seen_paths.insert(path.clone())
@@ -132,7 +129,9 @@ fn build_inventory(paths: &ResolvedPaths, config: &AppConfig) -> Result<Vec<AppR
                 {
                     apps.push(record);
                 }
-                walker.skip_current_dir();
+                if entry.file_type().is_dir() {
+                    walker.skip_current_dir();
+                }
             }
         }
     }
@@ -217,6 +216,77 @@ pub fn find_app_by_bundle_id(inventory: &[AppRecord], bundle_id: &str) -> Option
         .cloned()
 }
 
+pub fn find_unique_app_by_name(inventory: &[AppRecord], name: &str) -> Option<AppRecord> {
+    let target = normalize_name(name);
+    let mut matches = inventory
+        .iter()
+        .filter(|app| {
+            normalize_name(&app.name) == target || normalize_name(&app.display_name) == target
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| left.bundle_id.cmp(&right.bundle_id));
+    matches.dedup_by(|left, right| left.bundle_id == right.bundle_id);
+    if matches.len() == 1 {
+        return matches.into_iter().next();
+    }
+    None
+}
+
+pub fn installed_app_exists_for_vendor_namespace(inventory: &[AppRecord], bundle_id: &str) -> bool {
+    let Some(namespace) = vendor_namespace(bundle_id) else {
+        return false;
+    };
+    inventory.iter().any(|app| {
+        app.bundle_id != bundle_id && app.bundle_id.starts_with(&format!("{namespace}."))
+    })
+}
+
+pub fn extract_bundle_id(name: &str) -> Option<String> {
+    let trimmed = strip_known_suffixes(name);
+    if trimmed.starts_with("group.") {
+        let candidate = trimmed.trim_start_matches("group.");
+        if looks_like_bundle_id(candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+
+    let parts = trimmed.split('.').collect::<Vec<_>>();
+    if parts.len() >= 4 && looks_like_team_id(parts[0]) {
+        if parts[1] == "groups" {
+            let candidate = parts[2..].join(".");
+            if looks_like_bundle_id(&candidate) {
+                return Some(candidate);
+            }
+        }
+        let candidate = parts[1..].join(".");
+        if looks_like_bundle_id(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    if looks_like_bundle_id(trimmed) {
+        return Some(trimmed.to_string());
+    }
+    for index in 1..parts.len() {
+        let candidate = parts[index..].join(".");
+        if looks_like_bundle_id(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+pub fn normalize_name(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', '_', '.'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn read_app_groups(app_path: &Path) -> Vec<String> {
     let output = match Command::new("/usr/bin/codesign")
         .args(["-d", "--entitlements", ":-"])
@@ -258,13 +328,76 @@ pub fn read_app_groups(app_path: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn is_app_bundle_candidate(path: &Path, is_dir: bool) -> bool {
+    is_dir
+        && path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+}
+
+fn is_app_bundle_symlink(path: &Path, is_symlink: bool) -> bool {
+    is_symlink
+        && path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+        && fs::metadata(path)
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false)
+}
+
+fn strip_known_suffixes(name: &str) -> &str {
+    for suffix in [".plist", ".savedstate", ".savedState", ".binarycookies"] {
+        if let Some(value) = name.strip_suffix(suffix) {
+            return value;
+        }
+    }
+    name
+}
+
+fn looks_like_bundle_id(value: &str) -> bool {
+    let parts = value.split('.').collect::<Vec<_>>();
+    if parts.len() < 3
+        || parts
+            .first()
+            .is_none_or(|first| first.to_ascii_lowercase() != *first)
+    {
+        return false;
+    }
+    parts.iter().all(|part| {
+        !part.is_empty()
+            && part.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '-' || character == '_'
+            })
+    })
+}
+
+fn looks_like_team_id(value: &str) -> bool {
+    value.len() >= 4
+        && value
+            .chars()
+            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit())
+}
+
+fn vendor_namespace(bundle_id: &str) -> Option<String> {
+    let parts = bundle_id.split('.').collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return None;
+    }
+    Some(parts[..2].join("."))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::os::unix::fs as unix_fs;
 
     use tempfile::TempDir;
 
-    use super::{build_inventory, find_app_by_bundle_id, read_app_groups};
+    use super::{
+        AppRecord, build_inventory, extract_bundle_id, find_app_by_bundle_id,
+        find_unique_app_by_name, installed_app_exists_for_vendor_namespace, normalize_name,
+        read_app_groups,
+    };
     use crate::config::AppConfig;
     use crate::paths::ResolvedPaths;
 
@@ -311,5 +444,79 @@ mod tests {
         let cache = fs::read_to_string(&cache_path).expect("rewritten cache");
         let parsed: serde_json::Value = serde_json::from_str(&cache).expect("valid cache json");
         assert!(parsed.get("apps").is_some());
+    }
+
+    #[test]
+    fn inventory_builds_from_symlinked_app_bundles() {
+        let temp = TempDir::new().expect("tempdir");
+        let apps_root = temp.path().join("apps");
+        let real_app = apps_root.join("Real.app/Contents");
+        fs::create_dir_all(&real_app).expect("real app");
+        fs::write(
+            real_app.join("Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.example.symlinked</string>
+<key>CFBundleName</key><string>Symlinked</string>
+</dict></plist>"#,
+        )
+        .expect("plist");
+        let linked_app = apps_root.join("Linked.app");
+        unix_fs::symlink(apps_root.join("Real.app"), &linked_app).expect("symlinked app");
+
+        let paths = ResolvedPaths::for_test_home(temp.path());
+        let config = AppConfig {
+            app_roots: vec![apps_root.display().to_string()],
+            ..AppConfig::default()
+        };
+        let apps = build_inventory(&paths, &config).expect("inventory");
+        assert!(
+            apps.iter()
+                .any(|app| app.bundle_id == "com.example.symlinked")
+        );
+    }
+
+    #[test]
+    fn exact_name_matching_is_unique() {
+        let inventory = vec![AppRecord {
+            bundle_id: "com.example.test".to_string(),
+            name: "Test App".to_string(),
+            display_name: "Test App".to_string(),
+            app_path: "/Applications/Test App.app".to_string(),
+        }];
+        let matched = find_unique_app_by_name(&inventory, "test app").expect("unique name match");
+        assert_eq!(matched.bundle_id, "com.example.test");
+        assert_eq!(normalize_name("Test-App"), "test app");
+    }
+
+    #[test]
+    fn vendor_namespace_detection_ignores_exact_bundle_id_match() {
+        let inventory = vec![
+            AppRecord {
+                bundle_id: "com.microsoft.Word".to_string(),
+                name: "Word".to_string(),
+                display_name: "Word".to_string(),
+                app_path: "/Applications/Word.app".to_string(),
+            },
+            AppRecord {
+                bundle_id: "com.example.same".to_string(),
+                name: "Same".to_string(),
+                display_name: "Same".to_string(),
+                app_path: "/Applications/Same.app".to_string(),
+            },
+        ];
+        assert!(installed_app_exists_for_vendor_namespace(
+            &inventory,
+            "com.microsoft.office"
+        ));
+        assert!(!installed_app_exists_for_vendor_namespace(
+            &inventory,
+            "com.example.same"
+        ));
+        assert_eq!(
+            extract_bundle_id("ABCD1234.groups.com.example.app"),
+            Some("com.example.app".to_string())
+        );
     }
 }

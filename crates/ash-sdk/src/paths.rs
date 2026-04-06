@@ -27,7 +27,7 @@ impl ResolvedPaths {
             cache_dir: ash_home.join("cache"),
             user_temp_dir: user_home.join("tmp"),
             user_cache_dir: user_home.join("Library").join("Caches"),
-            app_roots: standard_app_roots(&user_home),
+            app_roots: vec![user_home.join("Applications")],
             ash_home,
             user_home,
         }
@@ -35,6 +35,13 @@ impl ResolvedPaths {
 }
 
 pub fn resolve_paths() -> Result<ResolvedPaths> {
+    if !cfg!(target_os = "macos") {
+        return Err(AshError::new(
+            ErrorCode::PlatformBlocked,
+            "ash is supported on macOS only",
+            "run ash on a macOS host",
+        ));
+    }
     let user_home = env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
         AshError::new(
             ErrorCode::PlatformBlocked,
@@ -107,6 +114,9 @@ mod tests {
             paths.user_cache_dir,
             PathBuf::from("/tmp/example-home/Library/Caches")
         );
-        assert!(paths.app_roots.contains(&PathBuf::from("/Applications")));
+        assert_eq!(
+            paths.app_roots,
+            vec![PathBuf::from("/tmp/example-home/Applications")]
+        );
     }
 }

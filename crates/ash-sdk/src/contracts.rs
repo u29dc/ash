@@ -330,11 +330,16 @@ pub fn tool_registry() -> Vec<ToolMeta> {
         },
         ToolMeta {
             name: "scan.run".to_string(),
-            command: "ash scan --profile <profile> --json".to_string(),
+            command: "ash scan [--profile <profile>] --json".to_string(),
             category: "scan".to_string(),
             description: "Generate a cleanup plan without mutating state.".to_string(),
             parameters: vec![
-                enum_param("profile", "Scan profile to execute.", &["safe", "full"], true),
+                enum_param(
+                    "profile",
+                    "Optional scan profile. Defaults to the config default profile.",
+                    &["safe", "full"],
+                    false,
+                ),
                 string_param(
                     "--scope",
                     "Optional repeated scope filter: temp|caches|logs|xcode|homebrew|browsers|apps|all.",

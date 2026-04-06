@@ -7,10 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::load_config;
 use crate::error::{AshError, ErrorCode, Result};
-use crate::inventory::{AppRecord, find_app_by_bundle_id, load_inventory};
+use crate::inventory::{
+    AppRecord, extract_bundle_id, find_app_by_bundle_id, find_unique_app_by_name, load_inventory,
+};
 use crate::paths::ResolvedPaths;
 use crate::planner::{CleanupPlan, verify_plan_hash};
-use crate::policy::{CandidateClass, RiskLevel, is_protected_absolute_path};
+use crate::policy::{
+    CandidateClass, RiskLevel, is_protected_absolute_path, is_safe_tool_cache_name,
+};
 use crate::trash::move_to_trash;
 
 const TEMP_MIN_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -245,11 +249,17 @@ fn revalidate_candidate(
             if name.starts_with("com.apple.") {
                 return Some("Apple-owned cache entries are report-only in generic scans".to_string());
             }
-            if let Some(owner) = installed_owner_for_name(name, inventory) {
+            if let Some(owner) = installed_owner_for_cache_name(name, inventory) {
                 return Some(format!(
                     "installed app caches are not eligible in generic scans: {}",
                     owner.bundle_id
                 ));
+            }
+            if !is_safe_tool_cache_name(name) {
+                return Some(
+                    "generic cache cleanup is blocked unless the cache is explicitly classified as safe"
+                        .to_string(),
+                );
             }
             min_age_block_reason(path, CACHE_MIN_AGE, "cache")
         }
@@ -369,6 +379,11 @@ fn path_has_open_handles(path: &Path) -> bool {
 fn installed_owner_for_name(name: &str, inventory: &[AppRecord]) -> Option<AppRecord> {
     extract_bundle_id(name)
         .and_then(|bundle_id| installed_owner_for_bundle_id(&bundle_id, inventory))
+        .or_else(|| find_unique_app_by_name(inventory, name))
+}
+
+fn installed_owner_for_cache_name(name: &str, inventory: &[AppRecord]) -> Option<AppRecord> {
+    installed_owner_for_name(name, inventory)
 }
 
 fn installed_owner_for_bundle_id(bundle_id: &str, inventory: &[AppRecord]) -> Option<AppRecord> {
@@ -421,74 +436,6 @@ fn parse_ps_line(line: &str) -> Option<(u32, &str)> {
         return None;
     }
     Some((pid, command))
-}
-
-fn extract_bundle_id(name: &str) -> Option<String> {
-    let trimmed = strip_known_suffixes(name);
-    if trimmed.starts_with("group.") {
-        let candidate = trimmed.trim_start_matches("group.");
-        if looks_like_bundle_id(candidate) {
-            return Some(candidate.to_string());
-        }
-    }
-
-    let parts = trimmed.split('.').collect::<Vec<_>>();
-    if parts.len() >= 4 && looks_like_team_id(parts[0]) {
-        if parts[1] == "groups" {
-            let candidate = parts[2..].join(".");
-            if looks_like_bundle_id(&candidate) {
-                return Some(candidate);
-            }
-        }
-        let candidate = parts[1..].join(".");
-        if looks_like_bundle_id(&candidate) {
-            return Some(candidate);
-        }
-    }
-
-    if looks_like_bundle_id(trimmed) {
-        return Some(trimmed.to_string());
-    }
-    for index in 1..parts.len() {
-        let candidate = parts[index..].join(".");
-        if looks_like_bundle_id(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn strip_known_suffixes(name: &str) -> &str {
-    for suffix in [".plist", ".savedstate", ".savedState", ".binarycookies"] {
-        if let Some(value) = name.strip_suffix(suffix) {
-            return value;
-        }
-    }
-    name
-}
-
-fn looks_like_bundle_id(value: &str) -> bool {
-    let parts = value.split('.').collect::<Vec<_>>();
-    if parts.len() < 3
-        || parts
-            .first()
-            .is_none_or(|first| first.to_ascii_lowercase() != *first)
-    {
-        return false;
-    }
-    parts.iter().all(|part| {
-        !part.is_empty()
-            && part.chars().all(|character| {
-                character.is_ascii_alphanumeric() || character == '-' || character == '_'
-            })
-    })
-}
-
-fn looks_like_team_id(value: &str) -> bool {
-    value.len() >= 4
-        && value
-            .chars()
-            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit())
 }
 
 #[cfg(test)]

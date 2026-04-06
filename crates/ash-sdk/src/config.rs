@@ -8,11 +8,15 @@ use crate::paths::ResolvedPaths;
 use crate::planner::ScanProfile;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub parallelism: usize,
+    #[serde(alias = "default_profile")]
     pub default_profile: ScanProfile,
+    #[serde(alias = "app_roots")]
     pub app_roots: Vec<String>,
+    #[serde(alias = "inventory_cache_ttl_seconds")]
     pub inventory_cache_ttl_seconds: u64,
 }
 

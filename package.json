@@ -5,7 +5,7 @@
 	"private": true,
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/u29dc/ash.git"
+		"url": "https://github.com/10716/ash.git"
 	},
 	"scripts": {
 		"prepare": "husky",

@@ -8,8 +8,9 @@ use std::time::Instant;
 use ash_sdk::{
     ApplyRequest, AshError, CleanupPlan, ContractSpec, EnvelopeMeta, ErrorCode, ErrorEnvelope,
     ErrorPayload, GlobalFlag, MaintenanceRunRequest, MaxRisk, ScanOptions, ScanProfile, Scope,
-    SuccessEnvelope, ToolMeta, apply_plan, contract_spec, list_maintenance_commands, resolve_paths,
-    run_health_checks, run_maintenance_command, scan, show_config, tool_registry, validate_config,
+    SuccessEnvelope, ToolMeta, apply_plan, contract_spec, list_maintenance_commands, load_config,
+    resolve_paths, run_health_checks, run_maintenance_command, scan, show_config, tool_registry,
+    validate_config,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -36,7 +37,7 @@ enum Command {
     },
     Scan {
         #[arg(long, value_enum)]
-        profile: ProfileArg,
+        profile: Option<ProfileArg>,
         #[arg(long = "scope", value_enum)]
         scopes: Vec<ScopeArg>,
         #[arg(long)]
@@ -185,7 +186,7 @@ fn main() -> std::process::ExitCode {
             output,
         } => handle_scan(
             &paths,
-            profile.into(),
+            profile.map(ScanProfile::from),
             scopes.into_iter().map(Scope::from).collect(),
             app,
             output,
@@ -267,12 +268,19 @@ fn handle_tools(name: Option<String>, start: Instant) -> i32 {
 
 fn handle_scan(
     paths: &ash_sdk::ResolvedPaths,
-    profile: ScanProfile,
+    profile: Option<ScanProfile>,
     scopes: Vec<Scope>,
     app: Option<String>,
     output: Option<PathBuf>,
     start: Instant,
 ) -> i32 {
+    let profile = match profile {
+        Some(profile) => profile,
+        None => match load_config(paths) {
+            Ok(config) => config.default_profile,
+            Err(error) => return emit_error("scan.run", &error, start),
+        },
+    };
     match scan(
         paths,
         ScanOptions {

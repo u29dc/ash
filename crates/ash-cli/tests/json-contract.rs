@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::fs;
 use std::path::Path;
 
 use assert_cmd::Command;
@@ -84,4 +85,24 @@ fn config_validate_command_emits_the_stable_json_envelope() {
     assert!(envelope.get("meta").is_some());
     assert_eq!(envelope["meta"]["tool"], "config.validate");
     assert!(envelope["data"]["valid"].is_boolean());
+}
+
+#[test]
+fn scan_uses_the_config_default_profile_when_profile_is_omitted() {
+    let temp = TempDir::new().expect("tempdir");
+    let ash_home = temp.path().join(".tools").join("ash");
+    fs::create_dir_all(&ash_home).expect("ash home");
+    fs::write(ash_home.join("config.toml"), "default_profile = \"full\"").expect("config");
+
+    let output = base_command(temp.path())
+        .args(["scan", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let envelope = parse_single_line_json(&output);
+
+    assert_eq!(envelope["ok"], true);
+    assert_eq!(envelope["data"]["plan"]["profile"], "full");
 }
