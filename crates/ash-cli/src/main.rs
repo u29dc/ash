@@ -6,11 +6,11 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use ash_sdk::{
-    ApplyRequest, AshError, CleanupPlan, ContractSpec, EnvelopeMeta, ErrorCode, ErrorEnvelope,
-    ErrorPayload, GlobalFlag, MaintenanceRunRequest, MaxRisk, ScanOptions, ScanProfile, Scope,
-    SuccessEnvelope, ToolMeta, apply_plan, contract_spec, list_maintenance_commands, load_config,
-    resolve_paths, run_health_checks, run_maintenance_command, scan, show_config, tool_registry,
-    validate_config,
+    ApplyRequest, AshError, CleanRequest, CleanupPlan, ContractSpec, EnvelopeMeta, ErrorCode,
+    ErrorEnvelope, ErrorPayload, GlobalFlag, MaintenanceRunRequest, MaxRisk, ScanOptions,
+    ScanProfile, Scope, SuccessEnvelope, ToolMeta, apply_plan, contract_spec,
+    list_maintenance_commands, load_config, parse_cleanup_plan_payload, resolve_paths, run_clean,
+    run_health_checks, run_maintenance_command, scan, show_config, tool_registry, validate_config,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -44,6 +44,22 @@ enum Command {
         app: Option<String>,
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    Clean {
+        #[arg(long, value_enum)]
+        profile: Option<ProfileArg>,
+        #[arg(long = "scope", value_enum)]
+        scopes: Vec<ScopeArg>,
+        #[arg(long)]
+        app: Option<String>,
+        #[arg(long, value_enum, default_value_t = MaxRiskArg::Safe)]
+        max_risk: MaxRiskArg,
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        #[arg(long)]
+        save_plan: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        include_plan: bool,
     },
     Apply {
         #[arg(long)]
@@ -155,6 +171,17 @@ struct ToolDetailData {
     tool: ToolMeta,
 }
 
+#[derive(Debug)]
+struct CleanCommandRequest {
+    profile: Option<ScanProfile>,
+    scopes: Vec<Scope>,
+    app: Option<String>,
+    max_risk: MaxRisk,
+    dry_run: bool,
+    save_plan: Option<PathBuf>,
+    include_plan: bool,
+}
+
 fn main() -> std::process::ExitCode {
     let start = Instant::now();
     let cli = Cli::parse();
@@ -190,6 +217,27 @@ fn main() -> std::process::ExitCode {
             scopes.into_iter().map(Scope::from).collect(),
             app,
             output,
+            start,
+        ),
+        Command::Clean {
+            profile,
+            scopes,
+            app,
+            max_risk,
+            dry_run,
+            save_plan,
+            include_plan,
+        } => handle_clean(
+            &paths,
+            CleanCommandRequest {
+                profile: profile.map(ScanProfile::from),
+                scopes: scopes.into_iter().map(Scope::from).collect(),
+                app,
+                max_risk: max_risk.into(),
+                dry_run,
+                save_plan,
+                include_plan,
+            },
             start,
         ),
         Command::Apply {
@@ -292,42 +340,16 @@ fn handle_scan(
         Ok(plan) => {
             if let Some(output) = output {
                 let summary = plan.summary.clone();
-                if let Some(parent) = output.parent()
-                    && let Err(error) = fs::create_dir_all(parent)
-                {
-                    return emit_error(
-                        "scan.run",
-                        &AshError::runtime(format!(
-                            "failed to create plan output directory {}: {error}",
-                            parent.display()
-                        )),
-                        start,
-                    );
-                }
-                let serialized = match serde_json::to_vec_pretty(&plan) {
-                    Ok(serialized) => serialized,
-                    Err(error) => {
-                        return emit_error(
-                            "scan.run",
-                            &AshError::runtime(format!("failed to serialize plan JSON: {error}")),
-                            start,
-                        );
-                    }
+                let written_plan_path = match write_plan_file(&plan, &output) {
+                    Ok(path) => path,
+                    Err(error) => return emit_error("scan.run", &error, start),
                 };
-                if let Err(error) = fs::write(&output, serialized).map_err(|error| {
-                    AshError::runtime(format!(
-                        "failed to write plan file {}: {error}",
-                        output.display()
-                    ))
-                }) {
-                    return emit_error("scan.run", &error, start);
-                }
                 emit_success(
                     "scan.run",
                     &json!({
                         "plan": plan,
                         "summary": summary,
-                        "writtenPlanPath": output.display().to_string(),
+                        "writtenPlanPath": written_plan_path,
                     }),
                     start,
                     MetaExtras::default(),
@@ -349,6 +371,97 @@ fn handle_scan(
         }
         Err(error) => emit_error("scan.run", &error, start),
     }
+}
+
+fn handle_clean(
+    paths: &ash_sdk::ResolvedPaths,
+    request: CleanCommandRequest,
+    start: Instant,
+) -> i32 {
+    let profile = match request.profile {
+        Some(profile) => profile,
+        None => match load_config(paths) {
+            Ok(config) => config.default_profile,
+            Err(error) => return emit_error("clean.run", &error, start),
+        },
+    };
+
+    match run_clean(
+        paths,
+        CleanRequest {
+            scan: ScanOptions {
+                app_target: request.app,
+                profile,
+                scopes: request.scopes,
+            },
+            max_risk: request.max_risk,
+            dry_run: request.dry_run,
+        },
+    ) {
+        Ok(run) => {
+            let saved_plan_path = match request.save_plan {
+                Some(path) => match write_plan_file(&run.plan, &path) {
+                    Ok(path) => Some(path),
+                    Err(error) => return emit_error("clean.run", &error, start),
+                },
+                None => None,
+            };
+            emit_success(
+                "clean.run",
+                &clean_response_data(
+                    run.plan,
+                    run.execution,
+                    saved_plan_path,
+                    request.include_plan,
+                ),
+                start,
+                MetaExtras::default(),
+                0,
+            )
+        }
+        Err(error) => emit_error("clean.run", &error, start),
+    }
+}
+
+fn clean_response_data(
+    plan: CleanupPlan,
+    execution: ash_sdk::ExecutionReport,
+    saved_plan_path: Option<String>,
+    include_plan: bool,
+) -> serde_json::Value {
+    let full_plan = include_plan.then(|| serde_json::to_value(&plan).expect("plan json"));
+    json!({
+        "plan": {
+            "planHash": plan.plan_hash,
+            "profile": plan.profile,
+            "scopes": plan.scopes,
+            "targetApp": plan.target_app,
+            "summary": plan.summary,
+        },
+        "execution": execution,
+        "savedPlanPath": saved_plan_path,
+        "fullPlan": full_plan,
+    })
+}
+
+fn write_plan_file(plan: &CleanupPlan, output: &PathBuf) -> ash_sdk::Result<String> {
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            AshError::runtime(format!(
+                "failed to create plan output directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    let serialized = serde_json::to_vec_pretty(plan)
+        .map_err(|error| AshError::runtime(format!("failed to serialize plan JSON: {error}")))?;
+    fs::write(output, serialized).map_err(|error| {
+        AshError::runtime(format!(
+            "failed to write plan file {}: {error}",
+            output.display()
+        ))
+    })?;
+    Ok(output.display().to_string())
 }
 
 fn handle_apply(
@@ -402,13 +515,7 @@ fn read_plan(plan_path: Option<PathBuf>) -> ash_sdk::Result<CleanupPlan> {
         }
         buffer
     };
-    serde_json::from_str(&payload).map_err(|error| {
-        AshError::new(
-            ErrorCode::PlanInvalid,
-            format!("failed to parse cleanup plan JSON: {error}"),
-            "re-run `ash scan` and pass the generated plan JSON to `ash apply`",
-        )
-    })
+    parse_cleanup_plan_payload(&payload)
 }
 
 fn emit_success<T: Serialize>(

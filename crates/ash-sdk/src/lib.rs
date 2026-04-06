@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bench;
+pub mod clean;
 pub mod config;
 pub mod contracts;
 pub mod error;
@@ -17,6 +18,7 @@ pub use bench::{
     FixtureSeedStats, ScanBenchmarkResult, benchmark_fixture_scan, benchmark_seeded_fixture_scan,
     seed_benchmark_fixture,
 };
+pub use clean::{CleanRequest, CleanRun, run_clean};
 pub use config::{
     AppConfig, ConfigShowData, ConfigValidationCheck, ConfigValidationResult, load_config,
     show_config, validate_config,
@@ -27,7 +29,9 @@ pub use contracts::{
     global_flags, tool_registry,
 };
 pub use error::{AshError, ErrorCode, Result};
-pub use executor::{ApplyRequest, ApplyResultItem, ExecutionReport, MaxRisk, apply_plan};
+pub use executor::{
+    ApplyRequest, ApplyResultItem, ExecutionReport, MaxRisk, apply_plan, parse_cleanup_plan_payload,
+};
 pub use health::{HealthCheck, HealthReport, run_health_checks};
 pub use maintenance::{
     MaintenanceCatalog, MaintenanceCommand, MaintenanceCommandResult, MaintenanceRunRequest,

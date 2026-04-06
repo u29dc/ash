@@ -3,7 +3,7 @@
 ## 1. Documentation
 
 - Primary external references: [Bun](https://bun.sh/docs/llms.txt), [Clap](https://docs.rs/clap/latest/clap/), [Rust Book](https://doc.rust-lang.org/book/), [Rust Reference](https://doc.rust-lang.org/reference/), [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/)
-- Local source-of-truth files: [`Cargo.toml`](Cargo.toml), [`package.json`](package.json), [`crates/ash-sdk/src/lib.rs`](crates/ash-sdk/src/lib.rs), [`crates/ash-cli/src/main.rs`](crates/ash-cli/src/main.rs), [`README.md`](README.md)
+- Local source-of-truth files: [`Cargo.toml`](Cargo.toml), [`package.json`](package.json), [`crates/ash-sdk/src/lib.rs`](crates/ash-sdk/src/lib.rs), [`crates/ash-sdk/src/clean.rs`](crates/ash-sdk/src/clean.rs), [`crates/ash-cli/src/main.rs`](crates/ash-cli/src/main.rs), [`README.md`](README.md)
 - This file is the canonical repo-level agent document. [`CLAUDE.md`](CLAUDE.md) and [`README.md`](README.md) mirror it for tool compatibility.
 
 ## 2. Repository Structure
@@ -39,18 +39,20 @@
 - `cargo run -p ash-cli -- health --json` - inspect readiness and remediation steps
 - `cargo run -p ash-cli -- config show --json` - inspect effective config and paths
 - `cargo run -p ash-cli -- scan --profile safe --json` - produce a read-only cleanup plan
-- `cargo run -p ash-cli -- apply --dry-run --plan <file> --json` - validate a plan without mutating state
+- `cargo run -p ash-cli -- clean --profile safe --dry-run --json` - run the scan and apply chain without writing a temp plan file
+- `cargo run -p ash-cli -- apply --dry-run --plan <file> --json` - validate a saved plan without mutating state; stdin also accepts raw plan JSON or `scan --json`
 - `bun run util:check` - required completion gate
 
 ## 5. Architecture
 
 - [`crates/ash-cli/src/main.rs`](crates/ash-cli/src/main.rs): parses flags, resolves config, dispatches commands, and emits JSON envelopes
 - [`crates/ash-sdk/src/contracts.rs`](crates/ash-sdk/src/contracts.rs): source of truth for envelope and tool metadata
+- [`crates/ash-sdk/src/clean.rs`](crates/ash-sdk/src/clean.rs): orchestration wrapper for the one-shot clean workflow
 - [`crates/ash-sdk/src/planner.rs`](crates/ash-sdk/src/planner.rs): read-only candidate discovery and cleanup plan generation
 - [`crates/ash-sdk/src/executor.rs`](crates/ash-sdk/src/executor.rs): plan verification and trash moves
 - [`crates/ash-sdk/src/policy.rs`](crates/ash-sdk/src/policy.rs): cleanup classes, risk tiers, and hard safety boundaries
 - Contract invariant: JSON commands emit exactly one stdout envelope with `{ ok, data | error, meta }`
-- Safety invariant: `scan` is read-only, `apply` executes only explicit plans, and dangerous app-state cleanup never rides along with generic safe cleanup
+- Safety invariant: `scan` is read-only, `apply` executes only explicit plans, `clean` is only a wrapper over `scan -> apply`, and dangerous app-state cleanup never rides along with generic safe cleanup
 
 ## 6. Runtime and State
 
@@ -79,5 +81,5 @@
 
 - Required gate: `bun run util:check`
 - Required Rust checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`
-- Required smoke path: `tools`, `health`, `config show`, `scan`, and `apply --dry-run`
+- Required smoke path: `tools`, `health`, `config show`, `scan`, `clean --dry-run`, and `apply --dry-run`
 - If you change the command surface or tool metadata, update the SDK registry and the CLI contract tests together

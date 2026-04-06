@@ -70,6 +70,41 @@ pub struct ExecutionReport {
     pub items: Vec<ApplyResultItem>,
 }
 
+pub fn parse_cleanup_plan_payload(payload: &str) -> Result<CleanupPlan> {
+    if let Ok(plan) = serde_json::from_str::<CleanupPlan>(payload) {
+        return Ok(plan);
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(payload).map_err(|error| {
+        AshError::new(
+            ErrorCode::PlanInvalid,
+            format!("failed to parse cleanup plan JSON: {error}"),
+            "re-run `ash scan` and pass the generated plan JSON to `ash apply`",
+        )
+    })?;
+
+    let plan_value = value
+        .get("data")
+        .and_then(|data| data.get("plan"))
+        .cloned()
+        .or_else(|| value.get("plan").cloned())
+        .ok_or_else(|| {
+            AshError::new(
+                ErrorCode::PlanInvalid,
+                "the provided JSON does not contain a cleanup plan",
+                "pass a raw CleanupPlan JSON document or pipe the `ash scan --json` envelope to `ash apply`",
+            )
+        })?;
+
+    serde_json::from_value(plan_value).map_err(|error| {
+        AshError::new(
+            ErrorCode::PlanInvalid,
+            format!("failed to decode cleanup plan JSON: {error}"),
+            "pass a raw CleanupPlan JSON document or pipe the `ash scan --json` envelope to `ash apply`",
+        )
+    })
+}
+
 pub fn apply_plan(paths: &ResolvedPaths, request: ApplyRequest) -> Result<ExecutionReport> {
     verify_plan_hash(&request.plan)?;
     let config = load_config(paths)?;
@@ -442,9 +477,10 @@ fn parse_ps_line(line: &str) -> Option<(u32, &str)> {
 mod tests {
     use std::fs;
 
+    use serde_json::json;
     use tempfile::TempDir;
 
-    use super::{ApplyRequest, MaxRisk, apply_plan};
+    use super::{ApplyRequest, MaxRisk, apply_plan, parse_cleanup_plan_payload};
     use crate::paths::ResolvedPaths;
     use crate::planner::{ScanOptions, ScanProfile, Scope, scan};
 
@@ -556,5 +592,45 @@ mod tests {
         assert_eq!(report.moved_count, 0);
         assert_eq!(report.blocked_count, 1);
         assert!(report.items.iter().all(|item| item.outcome == "blocked"));
+    }
+
+    #[test]
+    fn parse_cleanup_plan_payload_accepts_scan_envelope() {
+        let temp = TempDir::new().expect("tempdir");
+        let home = temp.path();
+        fs::create_dir_all(home.join("Library/Developer/Xcode/DerivedData/Fixture"))
+            .expect("derived data");
+        fs::write(
+            home.join("Library/Developer/Xcode/DerivedData/Fixture/blob"),
+            "temp",
+        )
+        .expect("derived data file");
+        let paths = ResolvedPaths::for_test_home(home);
+        let plan = scan(
+            &paths,
+            ScanOptions {
+                app_target: None,
+                profile: ScanProfile::Safe,
+                scopes: vec![Scope::Xcode],
+            },
+        )
+        .expect("plan");
+
+        let envelope = json!({
+            "ok": true,
+            "data": {
+                "plan": plan.clone(),
+                "summary": plan.summary,
+                "writtenPlanPath": null,
+            },
+            "error": null,
+            "meta": {
+                "tool": "scan.run",
+                "elapsed": 1,
+            },
+        });
+        let parsed = parse_cleanup_plan_payload(&serde_json::to_string(&envelope).expect("json"))
+            .expect("parsed plan");
+        assert_eq!(parsed.plan_hash, plan.plan_hash);
     }
 }

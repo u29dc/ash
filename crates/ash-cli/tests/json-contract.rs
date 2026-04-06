@@ -45,6 +45,13 @@ fn tools_command_emits_the_stable_json_envelope() {
             .iter()
             .any(|tool| tool["name"] == "scan.run")
     );
+    assert!(
+        envelope["data"]["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .any(|tool| tool["name"] == "clean.run")
+    );
 }
 
 #[test]
@@ -105,4 +112,80 @@ fn scan_uses_the_config_default_profile_when_profile_is_omitted() {
 
     assert_eq!(envelope["ok"], true);
     assert_eq!(envelope["data"]["plan"]["profile"], "full");
+}
+
+#[test]
+fn clean_command_emits_the_stable_json_envelope() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path();
+    fs::create_dir_all(home.join("Library/Developer/Xcode/DerivedData/Fixture"))
+        .expect("derived data");
+    fs::write(
+        home.join("Library/Developer/Xcode/DerivedData/Fixture/blob"),
+        "temp",
+    )
+    .expect("derived data file");
+
+    let output = base_command(home)
+        .args([
+            "clean",
+            "--profile",
+            "safe",
+            "--scope",
+            "xcode",
+            "--dry-run",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let envelope = parse_single_line_json(&output);
+
+    assert_eq!(envelope["ok"], true);
+    assert_eq!(envelope["meta"]["tool"], "clean.run");
+    assert_eq!(envelope["data"]["execution"]["dryRun"], true);
+    assert!(
+        envelope["data"]["plan"]["summary"]["eligibleCandidates"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 1
+    );
+}
+
+#[test]
+fn apply_accepts_scan_envelope_on_stdin() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path();
+    fs::create_dir_all(home.join("Library/Developer/Xcode/DerivedData/Fixture"))
+        .expect("derived data");
+    fs::write(
+        home.join("Library/Developer/Xcode/DerivedData/Fixture/blob"),
+        "temp",
+    )
+    .expect("derived data file");
+
+    let scan_output = base_command(home)
+        .args(["scan", "--profile", "safe", "--scope", "xcode", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output = base_command(home)
+        .args(["apply", "--dry-run", "--json"])
+        .write_stdin(scan_output)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let envelope = parse_single_line_json(&output);
+
+    assert_eq!(envelope["ok"], true);
+    assert_eq!(envelope["meta"]["tool"], "apply.run");
+    assert_eq!(envelope["data"]["dryRun"], true);
+    assert!(envelope["data"]["movedCount"].as_u64().unwrap_or(0) >= 1);
 }
