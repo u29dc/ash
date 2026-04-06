@@ -6,6 +6,11 @@ if ! command -v hyperfine >/dev/null 2>&1; then
 	exit 2
 fi
 
+cargo build --release -p ash-sdk --example fixture-benchmark >/dev/null
+FIXTURE_HOME="$(mktemp -d)"
+trap 'rm -rf "$FIXTURE_HOME"' EXIT
+target/release/examples/fixture-benchmark --home "$FIXTURE_HOME" --seed-only >/dev/null
+
 hyperfine --warmup 1 \
-	'cargo run -q -p ash-sdk --example fixture-benchmark -- --profile safe >/dev/null' \
-	'cargo run -q -p ash-sdk --example fixture-benchmark -- --profile full >/dev/null'
+	"target/release/examples/fixture-benchmark --home '$FIXTURE_HOME' --profile safe >/dev/null" \
+	"target/release/examples/fixture-benchmark --home '$FIXTURE_HOME' --profile full >/dev/null"

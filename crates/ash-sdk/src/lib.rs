@@ -14,7 +14,8 @@ pub mod policy;
 pub mod trash;
 
 pub use bench::{
-    FixtureSeedStats, ScanBenchmarkResult, benchmark_fixture_scan, seed_benchmark_fixture,
+    FixtureSeedStats, ScanBenchmarkResult, benchmark_fixture_scan, benchmark_seeded_fixture_scan,
+    seed_benchmark_fixture,
 };
 pub use config::{
     AppConfig, ConfigShowData, ConfigValidationCheck, ConfigValidationResult, load_config,

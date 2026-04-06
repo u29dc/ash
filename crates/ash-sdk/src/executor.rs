@@ -1,13 +1,22 @@
 use std::fs;
 use std::path::Path;
+use std::process::Command;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::load_config;
 use crate::error::{AshError, ErrorCode, Result};
+use crate::inventory::{AppRecord, find_app_by_bundle_id, load_inventory};
 use crate::paths::ResolvedPaths;
 use crate::planner::{CleanupPlan, verify_plan_hash};
-use crate::policy::{RiskLevel, is_protected_absolute_path};
+use crate::policy::{CandidateClass, RiskLevel, is_protected_absolute_path};
 use crate::trash::move_to_trash;
+
+const TEMP_MIN_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const CACHE_MIN_AGE: Duration = Duration::from_secs(72 * 60 * 60);
+const LOG_MIN_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const BROWSER_CACHE_MIN_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -59,6 +68,8 @@ pub struct ExecutionReport {
 
 pub fn apply_plan(paths: &ResolvedPaths, request: ApplyRequest) -> Result<ExecutionReport> {
     verify_plan_hash(&request.plan)?;
+    let config = load_config(paths)?;
+    let inventory = load_inventory(paths, &config)?;
     let mut moved_count = 0usize;
     let mut blocked_count = 0usize;
     let mut failed_count = 0usize;
@@ -144,6 +155,18 @@ pub fn apply_plan(paths: &ResolvedPaths, request: ApplyRequest) -> Result<Execut
             ));
         }
 
+        if let Some(reason) = revalidate_candidate(path, candidate, &inventory) {
+            blocked_count += 1;
+            items.push(ApplyResultItem {
+                backend: None,
+                candidate_id: candidate.id.clone(),
+                detail: reason,
+                outcome: "blocked".to_string(),
+                path: candidate.path.clone(),
+            });
+            continue;
+        }
+
         if request.dry_run {
             moved_count += 1;
             items.push(ApplyResultItem {
@@ -194,6 +217,280 @@ pub fn apply_plan(paths: &ResolvedPaths, request: ApplyRequest) -> Result<Execut
     })
 }
 
+fn revalidate_candidate(
+    path: &Path,
+    candidate: &crate::planner::CleanupCandidate,
+    inventory: &[AppRecord],
+) -> Option<String> {
+    if path_has_open_handles(path) {
+        return Some("candidate still has open file handles".to_string());
+    }
+
+    match candidate.class {
+        CandidateClass::TempPath => {
+            let name = file_name(path)?;
+            if name.starts_with("com.apple.") {
+                return Some("Apple-owned Darwin temp entries are report-only in v1".to_string());
+            }
+            if let Some(owner) = installed_owner_for_name(name, inventory) {
+                return Some(format!(
+                    "installed app temp entries are not eligible in generic scans: {}",
+                    owner.bundle_id
+                ));
+            }
+            min_age_block_reason(path, TEMP_MIN_AGE, "temp")
+        }
+        CandidateClass::UserCache => {
+            let name = file_name(path)?;
+            if name.starts_with("com.apple.") {
+                return Some("Apple-owned cache entries are report-only in generic scans".to_string());
+            }
+            if let Some(owner) = installed_owner_for_name(name, inventory) {
+                return Some(format!(
+                    "installed app caches are not eligible in generic scans: {}",
+                    owner.bundle_id
+                ));
+            }
+            min_age_block_reason(path, CACHE_MIN_AGE, "cache")
+        }
+        CandidateClass::UserLog => min_age_block_reason(path, LOG_MIN_AGE, "log"),
+        CandidateClass::BrowserDiskCache => {
+            let bundle_id = evidence_value(candidate, "bundleId")?;
+            if let Some(owner) = installed_owner_for_bundle_id(bundle_id, inventory)
+                && app_has_running_processes(&owner)
+            {
+                return Some(
+                    "browser cache cleanup is blocked while the browser appears to be running"
+                        .to_string(),
+                );
+            }
+            min_age_block_reason(path, BROWSER_CACHE_MIN_AGE, "browser cache")
+        }
+        CandidateClass::AppCacheLeftover
+        | CandidateClass::AppLogLeftover
+        | CandidateClass::ApplicationSupport
+        | CandidateClass::PreferencePlist
+        | CandidateClass::SandboxContainer
+        | CandidateClass::GroupContainer
+        | CandidateClass::SavedApplicationState
+        | CandidateClass::WebKitData
+        | CandidateClass::HttpStorage
+        | CandidateClass::CookieStore
+        | CandidateClass::LaunchAgent => {
+            let bundle_id = evidence_value(candidate, "bundleId")?;
+            if bundle_id.starts_with("com.apple.") {
+                return Some("Apple app state is blocked from targeted cleanup".to_string());
+            }
+            if let Some(owner) = installed_owner_for_bundle_id(bundle_id, inventory) {
+                if matches!(
+                    candidate.class,
+                    CandidateClass::AppCacheLeftover | CandidateClass::AppLogLeftover
+                ) {
+                    return Some("installed app cache cleanup is disabled in v1".to_string());
+                }
+                return Some(format!(
+                    "stateful app cleanup is blocked because the app is installed: {}",
+                    owner.bundle_id
+                ));
+            }
+            if bundle_id_has_running_processes(bundle_id, inventory) {
+                return Some("the targeted app still appears to be running".to_string());
+            }
+            None
+        }
+        CandidateClass::HomebrewCache => Some(
+            "Homebrew cleanup should execute via `brew cleanup --dry-run` or `brew cleanup`, not by trashing the cache directory directly".to_string(),
+        ),
+        CandidateClass::XcodeDeviceSupport => Some(
+            "device support cleanup is review-only and requires manual confirmation in a future execution path".to_string(),
+        ),
+        CandidateClass::XcodeArchives => Some(
+            "Xcode archives are report-only in v1 because they may be required for symbolication or release history".to_string(),
+        ),
+        CandidateClass::SimulatorDeviceSet => {
+            Some("simulator device trees are reported but not eligible in generic plans".to_string())
+        }
+        CandidateClass::SystemLog => Some("system log cleanup is not eligible in v1".to_string()),
+        CandidateClass::XcodeDerivedData => None,
+    }
+}
+
+fn file_name(path: &Path) -> Option<&str> {
+    path.file_name().and_then(|name| name.to_str())
+}
+
+fn evidence_value<'a>(
+    candidate: &'a crate::planner::CleanupCandidate,
+    kind: &str,
+) -> Option<&'a str> {
+    candidate
+        .evidence
+        .iter()
+        .find(|evidence| evidence.kind == kind)
+        .map(|evidence| evidence.detail.as_str())
+}
+
+fn min_age_block_reason(path: &Path, min_age: Duration, label: &str) -> Option<String> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    let age = SystemTime::now().duration_since(modified).ok()?;
+    if age < min_age {
+        return Some(format!(
+            "{label} entries must be older than {} hours before they are eligible",
+            min_age.as_secs() / 3600
+        ));
+    }
+    None
+}
+
+fn path_has_open_handles(path: &Path) -> bool {
+    let lsof_path = Path::new("/usr/sbin/lsof");
+    if !lsof_path.is_file() {
+        return false;
+    }
+    let output = if path.is_dir() {
+        Command::new(lsof_path)
+            .args(["-F", "p", "+D"])
+            .arg(path)
+            .output()
+    } else {
+        Command::new(lsof_path)
+            .args(["-F", "p", "--"])
+            .arg(path)
+            .output()
+    };
+    let Ok(output) = output else {
+        return false;
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.starts_with('p'))
+}
+
+fn installed_owner_for_name(name: &str, inventory: &[AppRecord]) -> Option<AppRecord> {
+    extract_bundle_id(name)
+        .and_then(|bundle_id| installed_owner_for_bundle_id(&bundle_id, inventory))
+}
+
+fn installed_owner_for_bundle_id(bundle_id: &str, inventory: &[AppRecord]) -> Option<AppRecord> {
+    let parts = bundle_id.split('.').collect::<Vec<_>>();
+    if parts.len() < 3 {
+        return None;
+    }
+    for end in (3..=parts.len()).rev() {
+        let candidate = parts[..end].join(".");
+        if let Some(app) = find_app_by_bundle_id(inventory, &candidate) {
+            return Some(app);
+        }
+    }
+    None
+}
+
+fn bundle_id_has_running_processes(bundle_id: &str, inventory: &[AppRecord]) -> bool {
+    installed_owner_for_bundle_id(bundle_id, inventory)
+        .map(|app| app_has_running_processes(&app))
+        .unwrap_or(false)
+}
+
+fn app_has_running_processes(app: &AppRecord) -> bool {
+    let executable_root = Path::new(&app.app_path).join("Contents").join("MacOS");
+    if !executable_root.exists() {
+        return false;
+    }
+    let executable_root = executable_root.display().to_string();
+    let output = match Command::new("/bin/ps")
+        .args(["-axo", "pid=,command="])
+        .output()
+    {
+        Ok(output) if output.status.success() || !output.stdout.is_empty() => output,
+        _ => return false,
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(parse_ps_line)
+        .any(|(_, command)| {
+            command == executable_root || command.starts_with(&format!("{executable_root}/"))
+        })
+}
+
+fn parse_ps_line(line: &str) -> Option<(u32, &str)> {
+    let trimmed = line.trim_start();
+    let pid_end = trimmed.find(char::is_whitespace)?;
+    let pid = trimmed[..pid_end].parse::<u32>().ok()?;
+    let command = trimmed[pid_end..].trim_start();
+    if command.is_empty() {
+        return None;
+    }
+    Some((pid, command))
+}
+
+fn extract_bundle_id(name: &str) -> Option<String> {
+    let trimmed = strip_known_suffixes(name);
+    if trimmed.starts_with("group.") {
+        let candidate = trimmed.trim_start_matches("group.");
+        if looks_like_bundle_id(candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+
+    let parts = trimmed.split('.').collect::<Vec<_>>();
+    if parts.len() >= 4 && looks_like_team_id(parts[0]) {
+        if parts[1] == "groups" {
+            let candidate = parts[2..].join(".");
+            if looks_like_bundle_id(&candidate) {
+                return Some(candidate);
+            }
+        }
+        let candidate = parts[1..].join(".");
+        if looks_like_bundle_id(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    if looks_like_bundle_id(trimmed) {
+        return Some(trimmed.to_string());
+    }
+    for index in 1..parts.len() {
+        let candidate = parts[index..].join(".");
+        if looks_like_bundle_id(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn strip_known_suffixes(name: &str) -> &str {
+    for suffix in [".plist", ".savedstate", ".savedState", ".binarycookies"] {
+        if let Some(value) = name.strip_suffix(suffix) {
+            return value;
+        }
+    }
+    name
+}
+
+fn looks_like_bundle_id(value: &str) -> bool {
+    let parts = value.split('.').collect::<Vec<_>>();
+    if parts.len() < 3
+        || parts
+            .first()
+            .is_none_or(|first| first.to_ascii_lowercase() != *first)
+    {
+        return false;
+    }
+    parts.iter().all(|part| {
+        !part.is_empty()
+            && part.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '-' || character == '_'
+            })
+    })
+}
+
+fn looks_like_team_id(value: &str) -> bool {
+    value.len() >= 4
+        && value
+            .chars()
+            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -208,15 +505,20 @@ mod tests {
     fn dry_run_reports_would_move_items() {
         let temp = TempDir::new().expect("tempdir");
         let home = temp.path();
-        fs::create_dir_all(home.join("tmp")).expect("tmp");
-        fs::write(home.join("tmp/file.tmp"), "temp").expect("temp file");
+        fs::create_dir_all(home.join("Library/Developer/Xcode/DerivedData/Fixture"))
+            .expect("derived data");
+        fs::write(
+            home.join("Library/Developer/Xcode/DerivedData/Fixture/blob"),
+            "temp",
+        )
+        .expect("derived data file");
         let paths = ResolvedPaths::for_test_home(home);
         let plan = scan(
             &paths,
             ScanOptions {
                 app_target: None,
                 profile: ScanProfile::Safe,
-                scopes: vec![Scope::Temp],
+                scopes: vec![Scope::Xcode],
             },
         )
         .expect("plan");
@@ -262,5 +564,50 @@ mod tests {
         )
         .expect_err("tampered plan must fail");
         assert_eq!(error.code, crate::error::ErrorCode::PlanInvalid);
+    }
+
+    #[test]
+    fn reinstalled_app_leftovers_are_blocked_at_apply_time() {
+        let temp = TempDir::new().expect("tempdir");
+        let home = temp.path();
+        fs::create_dir_all(home.join("Library/Caches/com.example.test")).expect("cache dir");
+        fs::write(home.join("Library/Caches/com.example.test/blob"), "cache").expect("cache file");
+        let paths = ResolvedPaths::for_test_home(home);
+        let plan = scan(
+            &paths,
+            ScanOptions {
+                app_target: Some("com.example.test".to_string()),
+                profile: ScanProfile::Full,
+                scopes: vec![Scope::Apps],
+            },
+        )
+        .expect("plan");
+
+        let app_dir = home.join("Applications/Test.app/Contents");
+        fs::create_dir_all(&app_dir).expect("app dir");
+        fs::write(
+            app_dir.join("Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.example.test</string>
+<key>CFBundleName</key><string>Test</string>
+</dict></plist>"#,
+        )
+        .expect("plist");
+
+        let report = apply_plan(
+            &paths,
+            ApplyRequest {
+                dry_run: true,
+                max_risk: MaxRisk::Dangerous,
+                plan,
+            },
+        )
+        .expect("dry-run apply");
+
+        assert_eq!(report.moved_count, 0);
+        assert_eq!(report.blocked_count, 1);
+        assert!(report.items.iter().all(|item| item.outcome == "blocked"));
     }
 }

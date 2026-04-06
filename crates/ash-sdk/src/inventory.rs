@@ -60,9 +60,13 @@ fn read_cache(paths: &ResolvedPaths, config: &AppConfig) -> Result<Option<Invent
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let cache: InventoryCache = serde_json::from_str(&contents).map_err(|error| {
-        crate::error::AshError::runtime(format!("invalid app inventory cache: {error}"))
-    })?;
+    let cache: InventoryCache = match serde_json::from_str(&contents) {
+        Ok(cache) => cache,
+        Err(_) => {
+            let _ = fs::remove_file(&cache_path);
+            return Ok(None);
+        }
+    };
     let max_age = Duration::from_secs(config.inventory_cache_ttl_seconds);
     let age = Utc::now()
         .signed_duration_since(cache.generated_at)
@@ -105,12 +109,17 @@ fn build_inventory(paths: &ResolvedPaths, config: &AppConfig) -> Result<Vec<AppR
         if !root.exists() {
             continue;
         }
-        for entry in WalkDir::new(root)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|entry| !is_hidden(entry.path()))
-            .filter_map(std::result::Result::ok)
-        {
+        let mut walker = WalkDir::new(root).follow_links(false).into_iter();
+        while let Some(entry) = walker.next() {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            if is_hidden(entry.path()) {
+                if entry.file_type().is_dir() {
+                    walker.skip_current_dir();
+                }
+                continue;
+            }
             if entry.file_type().is_dir()
                 && entry
                     .path()
@@ -123,6 +132,7 @@ fn build_inventory(paths: &ResolvedPaths, config: &AppConfig) -> Result<Vec<AppR
                 {
                     apps.push(record);
                 }
+                walker.skip_current_dir();
             }
         }
     }
@@ -286,5 +296,20 @@ mod tests {
     fn app_groups_fallback_is_empty_for_missing_bundle() {
         let temp = TempDir::new().expect("tempdir");
         assert!(read_app_groups(temp.path()).is_empty());
+    }
+
+    #[test]
+    fn corrupt_cache_is_ignored_and_removed() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = ResolvedPaths::for_test_home(temp.path());
+        fs::create_dir_all(&paths.cache_dir).expect("cache dir");
+        let cache_path = paths.cache_dir.join("app-inventory.json");
+        fs::write(&cache_path, "{not json").expect("corrupt cache");
+
+        let apps = super::load_inventory(&paths, &AppConfig::default()).expect("inventory");
+        assert!(!apps.iter().any(|app| app.bundle_id.is_empty()));
+        let cache = fs::read_to_string(&cache_path).expect("rewritten cache");
+        let parsed: serde_json::Value = serde_json::from_str(&cache).expect("valid cache json");
+        assert!(parsed.get("apps").is_some());
     }
 }

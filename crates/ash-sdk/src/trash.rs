@@ -30,7 +30,7 @@ pub fn detect_trash_backend(paths: &ResolvedPaths) -> TrashBackend {
 pub fn trash_backend_ready(paths: &ResolvedPaths) -> bool {
     match detect_trash_backend(paths) {
         TrashBackend::Native => true,
-        TrashBackend::Fallback => ensure_fallback_trash_dir(paths).is_ok(),
+        TrashBackend::Fallback => fallback_trash_dir_ready(paths).is_ok(),
     }
 }
 
@@ -91,6 +91,31 @@ fn ensure_fallback_trash_dir(paths: &ResolvedPaths) -> Result<PathBuf> {
     Ok(trash_dir)
 }
 
+fn fallback_trash_dir_ready(paths: &ResolvedPaths) -> Result<()> {
+    let trash_dir = paths.user_home.join(".Trash");
+    match fs::symlink_metadata(&trash_dir) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(AshError::new(
+                    ErrorCode::SafetyBlocked,
+                    format!("trash path must not be a symlink: {}", trash_dir.display()),
+                    "replace the symlinked trash path with a real directory and retry",
+                ));
+            }
+            if !metadata.is_dir() {
+                return Err(AshError::new(
+                    ErrorCode::SafetyBlocked,
+                    format!("trash path is not a directory: {}", trash_dir.display()),
+                    "replace the trash path with a real directory and retry",
+                ));
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn unique_fallback_destination(trash_dir: &Path, base_name: &std::ffi::OsStr) -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -126,5 +151,13 @@ mod tests {
         move_to_trash(&source, &paths).expect("move to trash");
         assert!(!source.exists());
         assert!(temp.path().join(".Trash").exists());
+    }
+
+    #[test]
+    fn readiness_check_does_not_create_trash_directory() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = ResolvedPaths::for_test_home(temp.path());
+        assert!(super::trash_backend_ready(&paths));
+        assert!(!temp.path().join(".Trash").exists());
     }
 }

@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::env;
+use std::path::Path;
 
 use crate::config::{load_config, validate_config};
 use crate::contracts::HealthStatus;
@@ -79,14 +81,15 @@ pub fn run_health_checks(paths: &ResolvedPaths) -> HealthReport {
         fix: "run `ash config validate --json` to inspect failing checks".to_string(),
     });
 
+    let trash_backend_available = trash_backend_ready(paths);
     checks.push(HealthCheck {
         name: "trashBackend".to_string(),
-        status: if trash_backend_ready(paths) {
+        status: if trash_backend_available {
             HealthStatus::Ready
         } else {
             HealthStatus::Blocked
         },
-        message: if trash_backend_ready(paths) {
+        message: if trash_backend_available {
             "a trash backend is ready".to_string()
         } else {
             "no usable trash backend is available".to_string()
@@ -103,18 +106,15 @@ pub fn run_health_checks(paths: &ResolvedPaths) -> HealthReport {
         fix: "grant Full Disk Access to your terminal if full-profile scans need protected user data roots".to_string(),
     });
 
+    let hyperfine_available = command_on_path("hyperfine");
     checks.push(HealthCheck {
         name: "hyperfine".to_string(),
-        status: if std::path::Path::new("/opt/homebrew/bin/hyperfine").exists()
-            || std::path::Path::new("/usr/local/bin/hyperfine").exists()
-        {
+        status: if hyperfine_available {
             HealthStatus::Ready
         } else {
             HealthStatus::Degraded
         },
-        message: if std::path::Path::new("/opt/homebrew/bin/hyperfine").exists()
-            || std::path::Path::new("/usr/local/bin/hyperfine").exists()
-        {
+        message: if hyperfine_available {
             "hyperfine is available for benchmark scripts".to_string()
         } else {
             "hyperfine is not installed; benchmark scripts will be blocked".to_string()
@@ -172,6 +172,20 @@ fn full_disk_access_status(paths: &ResolvedPaths) -> (HealthStatus, String) {
         "Full Disk Access could not be verified from the standard protected directories"
             .to_string(),
     )
+}
+
+fn command_on_path(name: &str) -> bool {
+    env::var_os("PATH")
+        .map(|path| {
+            env::split_paths(&path)
+                .map(|entry| entry.join(name))
+                .any(|candidate| is_executable_file(&candidate))
+        })
+        .unwrap_or(false)
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
 }
 
 #[cfg(test)]

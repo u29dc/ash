@@ -70,6 +70,18 @@ pub fn list_maintenance_commands() -> MaintenanceCatalog {
 
 pub fn run_maintenance_command(request: MaintenanceRunRequest) -> Result<MaintenanceCommandResult> {
     let start = Instant::now();
+    let requires_sudo = list_maintenance_commands()
+        .commands
+        .into_iter()
+        .find(|command| command.name == request.name)
+        .map(|command| command.requires_sudo)
+        .ok_or_else(|| {
+            AshError::new(
+                ErrorCode::Unsupported,
+                format!("unknown maintenance command: {}", request.name),
+                "run `ash maintenance list --json` to inspect supported maintenance commands",
+            )
+        })?;
     if request.dry_run {
         return Ok(MaintenanceCommandResult {
             elapsed_ms: start.elapsed().as_millis() as u64,
@@ -78,6 +90,16 @@ pub fn run_maintenance_command(request: MaintenanceRunRequest) -> Result<Mainten
             output: "dry-run: no command executed".to_string(),
             success: true,
         });
+    }
+    if requires_sudo && !effective_user_is_root()? {
+        return Err(AshError::new(
+            ErrorCode::PrerequisiteBlocked,
+            format!(
+                "maintenance command {} requires root privileges",
+                request.name
+            ),
+            "re-run the command from a root shell or keep using --dry-run",
+        ));
     }
 
     let output = match request.name.as_str() {
@@ -99,14 +121,14 @@ pub fn run_maintenance_command(request: MaintenanceRunRequest) -> Result<Mainten
                     String::from_utf8_lossy(&first.stderr).trim().to_string(),
                 ));
             }
-            Command::new("/usr/bin/sudo")
-                .args(["/usr/bin/killall", "-HUP", "mDNSResponder"])
+            Command::new("/usr/bin/killall")
+                .args(["-HUP", "mDNSResponder"])
                 .output()
                 .map_err(|error| {
                     AshError::new(
                         ErrorCode::MaintenanceFailed,
                         format!("failed to restart mDNSResponder: {error}"),
-                        "retry with sudo access available",
+                        "retry from a root shell",
                     )
                 })?
         }
@@ -122,33 +144,27 @@ pub fn run_maintenance_command(request: MaintenanceRunRequest) -> Result<Mainten
                 "verify the lsregister tool exists on this macOS version",
             )
         })?,
-        "spotlight.reindex" => Command::new("/usr/bin/sudo")
-            .args(["/usr/bin/mdutil", "-E", "/"])
+        "spotlight.reindex" => Command::new("/usr/bin/mdutil")
+            .args(["-E", "/"])
             .output()
             .map_err(|error| {
                 AshError::new(
                     ErrorCode::MaintenanceFailed,
                     format!("failed to start Spotlight reindex: {error}"),
-                    "retry with sudo access available",
+                    "retry from a root shell",
                 )
             })?,
-        "font-cache.clear" => Command::new("/usr/bin/sudo")
-            .args(["/usr/bin/atsutil", "databases", "-remove"])
+        "font-cache.clear" => Command::new("/usr/bin/atsutil")
+            .args(["databases", "-remove"])
             .output()
             .map_err(|error| {
                 AshError::new(
                     ErrorCode::MaintenanceFailed,
                     format!("failed to clear font cache: {error}"),
-                    "retry with sudo access available",
+                    "retry from a root shell",
                 )
             })?,
-        other => {
-            return Err(AshError::new(
-                ErrorCode::Unsupported,
-                format!("unknown maintenance command: {other}"),
-                "run `ash maintenance list --json` to inspect supported maintenance commands",
-            ));
-        }
+        _ => unreachable!("validated against registry above"),
     };
 
     if !output.status.success() {
@@ -168,9 +184,31 @@ pub fn run_maintenance_command(request: MaintenanceRunRequest) -> Result<Mainten
     })
 }
 
+fn effective_user_is_root() -> Result<bool> {
+    let output = Command::new("/usr/bin/id")
+        .arg("-u")
+        .output()
+        .map_err(|error| {
+            AshError::new(
+                ErrorCode::PrerequisiteBlocked,
+                format!("failed to determine effective user id: {error}"),
+                "ensure `/usr/bin/id` is available and retry",
+            )
+        })?;
+    if !output.status.success() {
+        return Err(AshError::new(
+            ErrorCode::PrerequisiteBlocked,
+            "failed to determine effective user id",
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == "0")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MaintenanceRunRequest, list_maintenance_commands, run_maintenance_command};
+    use crate::ErrorCode;
 
     #[test]
     fn list_contains_expected_commands() {
@@ -192,5 +230,19 @@ mod tests {
         .expect("dry-run maintenance");
         assert!(result.success);
         assert!(result.dry_run);
+    }
+
+    #[test]
+    fn sudo_commands_are_blocked_when_not_root() {
+        let is_root = super::effective_user_is_root().expect("effective uid");
+        if is_root {
+            return;
+        }
+        let error = run_maintenance_command(MaintenanceRunRequest {
+            name: "dns.flush".to_string(),
+            dry_run: false,
+        })
+        .expect_err("dns.flush should be blocked when not root");
+        assert_eq!(error.code, ErrorCode::PrerequisiteBlocked);
     }
 }

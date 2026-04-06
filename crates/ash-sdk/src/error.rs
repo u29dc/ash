@@ -10,6 +10,7 @@ pub enum ErrorCode {
     ConfigInvalid,
     ConfigBlocked,
     PlatformBlocked,
+    PrerequisiteBlocked,
     HealthBlocked,
     PlanInvalid,
     PlanDrift,
@@ -25,6 +26,7 @@ impl ErrorCode {
             Self::ConfigInvalid => "CONFIG_INVALID",
             Self::ConfigBlocked => "CONFIG_BLOCKED",
             Self::PlatformBlocked => "PLATFORM_BLOCKED",
+            Self::PrerequisiteBlocked => "PREREQUISITE_BLOCKED",
             Self::HealthBlocked => "HEALTH_BLOCKED",
             Self::PlanInvalid => "PLAN_INVALID",
             Self::PlanDrift => "PLAN_DRIFT",
@@ -37,6 +39,7 @@ impl ErrorCode {
     pub fn exit_code(self) -> i32 {
         match self {
             Self::PlatformBlocked
+            | Self::PrerequisiteBlocked
             | Self::ConfigBlocked
             | Self::HealthBlocked
             | Self::PlanDrift

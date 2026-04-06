@@ -6,4 +6,6 @@ if ! command -v hyperfine >/dev/null 2>&1; then
 	exit 2
 fi
 
-hyperfine --warmup 1 'cargo run -q -p ash-cli -- scan --profile full --json >/dev/null'
+cargo build --release -p ash-cli >/dev/null
+
+hyperfine --warmup 1 'target/release/ash scan --profile full --json >/dev/null'

@@ -8,7 +8,7 @@ use crate::error::Result;
 use crate::paths::ResolvedPaths;
 use crate::planner::{PlanSummary, ScanOptions, ScanProfile, Scope, scan};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FixtureSeedStats {
     pub directories: usize,
@@ -160,6 +160,14 @@ pub fn seed_benchmark_fixture(home: &Path) -> Result<FixtureSeedStats> {
 
 pub fn benchmark_fixture_scan(home: &Path, profile: ScanProfile) -> Result<ScanBenchmarkResult> {
     let seed = seed_benchmark_fixture(home)?;
+    benchmark_seeded_fixture_scan(home, profile, seed)
+}
+
+pub fn benchmark_seeded_fixture_scan(
+    home: &Path,
+    profile: ScanProfile,
+    seed: FixtureSeedStats,
+) -> Result<ScanBenchmarkResult> {
     let paths = ResolvedPaths::for_test_home(home);
     let start = Instant::now();
     let plan = scan(
@@ -184,7 +192,10 @@ pub fn benchmark_fixture_scan(home: &Path, profile: ScanProfile) -> Result<ScanB
 mod tests {
     use tempfile::TempDir;
 
-    use super::benchmark_fixture_scan;
+    use super::{
+        FixtureSeedStats, benchmark_fixture_scan, benchmark_seeded_fixture_scan,
+        seed_benchmark_fixture,
+    };
     use crate::planner::ScanProfile;
 
     #[test]
@@ -193,6 +204,24 @@ mod tests {
         let result =
             benchmark_fixture_scan(temp.path(), ScanProfile::Full).expect("benchmark result");
         assert!(result.seed.files > 0);
+        assert!(result.summary.total_candidates > 0);
+    }
+
+    #[test]
+    fn benchmark_seeded_fixture_scan_reuses_existing_fixture() {
+        let temp = TempDir::new().expect("tempdir");
+        let seed = seed_benchmark_fixture(temp.path()).expect("seed fixture");
+        let result = benchmark_seeded_fixture_scan(
+            temp.path(),
+            ScanProfile::Safe,
+            FixtureSeedStats {
+                directories: seed.directories,
+                files: seed.files,
+                bytes_seeded: seed.bytes_seeded,
+            },
+        )
+        .expect("seeded benchmark result");
+        assert_eq!(result.seed.files, seed.files);
         assert!(result.summary.total_candidates > 0);
     }
 }

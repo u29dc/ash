@@ -46,8 +46,7 @@ pub fn resolve_paths() -> Result<ResolvedPaths> {
     let user_temp_dir = darwin_dir("DARWIN_USER_TEMP_DIR")
         .or_else(|| env::var_os("TMPDIR").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
-    let user_cache_dir = darwin_dir("DARWIN_USER_CACHE_DIR")
-        .unwrap_or_else(|| user_home.join("Library").join("Caches"));
+    let user_cache_dir = user_home.join("Library").join("Caches");
 
     Ok(ResolvedPaths {
         config_path: ash_home.join("config.toml"),
